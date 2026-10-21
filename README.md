@@ -108,6 +108,47 @@ scan_planner_node:
 ros2 run scan_planner keypoint_recorder.py --output keypoints.yaml
 ```
 
+## GoSLAM 实拍地图仿真
+
+本分支内置两张 GoSLAM 实拍的室内点云地图，位于 `src/simulator/map_generator/maps/`，随 `map_generator` 包一起安装（`colcon build` 后可通过 `get_package_share_directory("map_generator")` 解析路径），无需手动指定绝对路径：
+
+- `goslam_xiaohao_hq_indoor_single_0.1m.pcd`：单层室内地图
+- `goslam_xiaohao_hq_indoor_multi_0.1m.pcd`：多层室内地图
+
+两个预设启动文件封装了 `run.launch.py`，已按实拍地图重新计算出生点（entry floor 约 `-4.4, -2.5, 0.25`）：
+
+```bash
+source install/setup.bash
+
+# 单层：闭环四足运动学仿真 + RViz2 2D Nav Goal（navi_mode:=1），开箱即用
+ros2 launch scan_planner run_goslam_single.launch.py
+
+# 多层：开环里程计回放（四足运动学仿真爬不了楼梯，必须用 open_loop）
+ros2 launch scan_planner run_goslam_multi.launch.py
+```
+
+两个预设都支持 `use_gpu:=true`（OpenGL 渲染后端）和 `sensor_type:=depth` 覆盖参数。
+
+多层出生点说明：`open_loop_controller` 的 `init_x/init_y/init_z` 只从 `config/controllers.yaml` 读取，`run.launch.py` 的 `init_x/y/z` 参数**不会**转发给它（闭环路径的 `go2_kinematic_sim` 才会被 launch 参数覆盖）。修改多层出生点请编辑 `controllers.yaml` 中 `open_loop_controller` 一节。
+
+### 多层自动巡层（navi_mode:=2）
+
+多层自动巡层需要真实录制的三维路径点。`config/keypoints.multi.yaml` 目前只是占位模板（单点=出生点），实际使用前需先录制：
+
+```bash
+# 1. 手动探索模式启动（默认 navi_mode:=1），在 RViz2 里用 2D Nav Goal 驱动机器人走遍各层
+ros2 launch scan_planner run_goslam_multi.launch.py
+
+# 2. 另开终端录制停靠点为路径点（a/Enter 添加，l 列出，q 保存退出）
+ros2 run scan_planner keypoint_recorder.py --odom /quad_0/body_pose \
+  --output $(ros2 pkg prefix scan_planner)/share/scan_planner/config/keypoints.multi.yaml
+
+# 3. 回放巡层
+ros2 launch scan_planner run_goslam_multi.launch.py navi_mode:=2
+```
+
+`keypoints.multi.yaml` 中的 `fsm.waypoints` 是 `[x, y, z, x, y, z, ...]` 的扁平浮点数组，坐标系为 `world`；`keypoint_recorder.py` 会以相同格式回写该文件。
+
 ## Gazebo Fortress / Go2 仿真
 
 Go2 四足机器人物理模型基于 Gazebo Fortress、`ros_gz_sim` 和 `gz_ros2_control` 构建，对外提供 12 关节的 `joint_trajectory_controller`、`/joint_states` 话题、IMU 数据、四个足端接触力话题以及 `/clock` 时钟话题：
