@@ -1,0 +1,40 @@
+<launch>
+  <!-- ==========================================================================
+       Multi-floor preset: run the planner against the multi-floor GoSLAM PCD
+       (goslam_xiaohao_hq_indoor_multi_0.1m.pcd).
+
+       Quick start - top floor only, click "2D Nav Goal" in RViz:
+         roslaunch scan_planner run_multi.launch
+
+       Full multi-floor keypoint tour (navi_mode=2):
+         1. Record waypoints by driving the robot inside a running sim:
+              python3 tools/keypoint_recorder.py       # writes tools/keypoint.yaml
+            See tools/README.md. navi_mode=2 makes the FSM ros::shutdown() if
+            tools/keypoint.yaml is missing or contains no waypoints.
+         2. Relaunch with the tour settings:
+              roslaunch scan_planner run_multi.launch navi_mode:=2 controller_mode:=open_loop
+            open_loop republishes the planned trajectory as odometry, which is
+            required between floors because the quadruped kinematic sim cannot
+            climb stairs.
+
+       Measured map facts: X[-16.1,21.0] Y[-15.1,4.2] Z[-12.4,3.4]; floor slabs
+       near z = -0.1 (entry/top), -4.4, -5.4, -7.9, -9.4, -12.4. The local-sensing
+       renderer builds its spatial hash from the cloud's own bounds (getMinMax3D),
+       so the full 15.8 m-tall map loads without changing simulator map_size.
+       ========================================================================== -->
+  <arg name="navi_mode" default="1"/>
+  <arg name="controller_mode" default="closed_loop"/>
+
+  <include file="$(find scan_planner)/launch/run.launch">
+    <arg name="navi_mode" value="$(arg navi_mode)"/>
+    <arg name="controller_mode" value="$(arg controller_mode)"/>
+    <arg name="use_pcd_map" value="true"/>
+    <arg name="pcd_map_file" value="$(find map_generator)/resource/goslam_xiaohao_hq_indoor_multi_0.1m.pcd"/>
+    <!-- Entry (top) floor spawn: open area with ~2.9 m clearance to nearest wall.
+         simulator.xml's built-in default for navi_mode!=1 is (-5.5, 5.5), which is
+         OUTSIDE this map (Y max = 4.21), so an explicit valid spawn is always passed. -->
+    <arg name="init_x" value="-4.4"/>
+    <arg name="init_y" value="-2.5"/>
+    <arg name="init_z" value="0.25"/>
+  </include>
+</launch>

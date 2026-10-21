@@ -9,6 +9,15 @@
   <arg name="navi_mode" default="1"/>
   <arg name="sensor_type" default="lidar"/>
 
+  <!-- simulation map source: real PCD scan (default) or procedural mockamap -->
+  <!-- use_pcd_map:=false falls back to mockamap; PCD files live in map_generator/resource (git-ignored) -->
+  <arg name="use_pcd_map" default="true"/>
+  <arg name="pcd_map_file" default="$(find map_generator)/resource/goslam_xiaohao_hq_indoor_single_0.1m.pcd"/>
+  <!-- robot spawn pose: open area of the single-floor scan (bounds X[-16.1,9.8] Y[-14.7,4.2] Z[-0.1,3.4]) -->
+  <arg name="init_x" default="-4.4"/>
+  <arg name="init_y" default="-2.5"/>
+  <arg name="init_z" default="0.25"/>
+
   <!-- body topic -->
   <arg name="body_pose_topic" value="$(eval '/LIO/odom_vehicle' if arg('is_real_world') else '/quad_0/body_pose')" />
   <param name="body_pose_topic" value="$(arg body_pose_topic)" type="str"/>
@@ -57,6 +66,11 @@
     <arg name="is_real_world" value="$(arg is_real_world)" />
     <arg name="navi_mode" value="$(arg navi_mode)" />
     <arg name="sensor_type" value="$(arg sensor_type)" />
+    <arg name="use_pcd_map" value="$(arg use_pcd_map)" />
+    <arg name="pcd_map_file" value="$(arg pcd_map_file)" />
+    <arg name="init_x" value="$(arg init_x)" />
+    <arg name="init_y" value="$(arg init_y)" />
+    <arg name="init_z" value="$(arg init_z)" />
   </include>
 
 </launch>
