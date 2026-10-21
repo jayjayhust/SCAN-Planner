@@ -17,5 +17,6 @@ target_include_directories(map_pub PRIVATE ${PCL_INCLUDE_DIRS})
 ament_target_dependencies(map_pub pcl_conversions rclcpp sensor_msgs)
 target_link_libraries(map_pub Eigen3::Eigen ${PCL_LIBRARIES})
 install(TARGETS map_pub DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY maps DESTINATION share/${PROJECT_NAME} OPTIONAL)
 
 ament_package()

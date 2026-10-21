@@ -1,0 +1,21 @@
+# Multi-floor tour waypoints for navi_mode:=2 (PRESET_TARGET).
+#
+# The waypoints below are a PLACEHOLDER (a single point at the map entry-floor
+# spawn). A real multi-floor tour MUST be recorded on the actual map:
+#
+#   1. Explore/record mode (manual driving):
+#        ros2 launch scan_planner run_goslam_multi.launch.py
+#      then click "2D Nav Goal" in RViz to move the robot.
+#   2. In a second terminal, record the stops as waypoints:
+#        ros2 run scan_planner keypoint_recorder.py \
+#          --odom /quad_0/body_pose \
+#          --output <abs path to this file>
+#      press a/Enter at each stop to add, l to list, q to save+quit.
+#   3. Play the tour back:
+#        ros2 launch scan_planner run_goslam_multi.launch.py navi_mode:=2
+#
+# fsm.waypoints is a FLAT array of [x, y, z, x, y, z, ...] triples in the
+# "world" frame. keypoint_recorder.py rewrites this file in the same format.
+scan_planner_node:
+  ros__parameters:
+    fsm.waypoints: [-4.4, -2.5, 0.25]

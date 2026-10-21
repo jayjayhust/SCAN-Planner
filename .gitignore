@@ -44,3 +44,10 @@ Thumbs.db
 *.so.*
 *.dylib
 *.dll
+
+# Local working copies of scanned PCD maps. The tracked versions live in
+# src/simulator/map_generator/maps/ and ship with the map_generator package.
+/src/simulator/map_generator/resource/
+
+# Qoder IDE cache
+/.qoder/
