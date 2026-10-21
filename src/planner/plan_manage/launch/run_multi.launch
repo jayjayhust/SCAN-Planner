@@ -29,7 +29,7 @@
     <arg name="navi_mode" value="$(arg navi_mode)"/>
     <arg name="controller_mode" value="$(arg controller_mode)"/>
     <arg name="use_pcd_map" value="true"/>
-    <arg name="pcd_map_file" value="$(find map_generator)/resource/goslam_xiaohao_hq_indoor_multi_0.1m.pcd"/>
+    <arg name="pcd_map_file" value="$(find map_generator)/maps/goslam_xiaohao_hq_indoor_multi_0.1m.pcd"/>
     <!-- Entry (top) floor spawn: open area with ~2.9 m clearance to nearest wall.
          simulator.xml's built-in default for navi_mode!=1 is (-5.5, 5.5), which is
          OUTSIDE this map (Y max = 4.21), so an explicit valid spawn is always passed. -->
