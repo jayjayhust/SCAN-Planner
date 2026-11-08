@@ -24,6 +24,7 @@ rosdep update
 rosdep install --from-paths src --ignore-src -r -y
 sudo apt install libarmadillo-dev libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
 
+# run this before colcon build: source /opt/ros/humble/setup.bash
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
@@ -41,21 +42,33 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DUSE_GPU
 
 ```bash
 source install/setup.bash
+# 使用默认点云地图
 ros2 launch scan_planner run.launch.py \
   is_real_world:=false navi_mode:=1 sensor_type:=lidar \
   controller_mode:=closed_loop use_gpu:=false
 ```
 
-
 ```bash
 source install/setup.bash
+# 使用自定义点云地图
 ros2 launch scan_planner run.launch.py \
   is_real_world:=false navi_mode:=1 sensor_type:=lidar \
   controller_mode:=closed_loop use_gpu:=false \
   use_pcd_map:=true pcd_map_file:=/home/xiaoqi_wen/Desktop/scan/SCAN-Planner/map.pcd
+
+# 使用自定义点云地图(单层地图，使用 RViz2 的 2D 目标点工具选择导航目标)
+ros2 launch scan_planner run.launch.py \
+  is_real_world:=false navi_mode:=1 sensor_type:=lidar \
+  controller_mode:=closed_loop use_gpu:=false \
+  use_pcd_map:=true pcd_map_file:=/home/jay/workspace/robotics/unitree/SCAN-Planner/src/simulator/map_generator/maps/goslam_xiaohao_hq_indoor_single_0.1m.pcd
+
+# 使用自定义点云地图(多层地图，按照 ROS 2 参数文件中预设的 `fsm.waypoints` 路径点序列导航)
+ros2 launch scan_planner run.launch.py \
+  is_real_world:=false navi_mode:=2 sensor_type:=lidar \
+  controller_mode:=open_loop use_gpu:=false \
+  use_pcd_map:=true pcd_map_file:=/home/jay/workspace/robotics/unitree/SCAN-Planner/src/simulator/map_generator/maps/goslam_xiaohao_hq_indoor_multi_0.1m.pcd \
+  keypoints_file:=/home/jay/workspace/robotics/unitree/SCAN-Planner/src/simulator/map_generator/configs/go2-xiaohao-keypoints.yaml
 ```
-
-
 
 在另一个终端启动 RViz2：
 
@@ -133,7 +146,9 @@ ros2 launch scan_planner run_goslam_multi.launch.py
 
 ### 多层自动巡层（navi_mode:=2）
 
-多层自动巡层需要真实录制的三维路径点。`config/keypoints.multi.yaml` 目前只是占位模板（单点=出生点），实际使用前需先录制：
+多层自动巡层需要真实录制的三维路径点。`config/keypoints.multi.yaml` 目前只是占位模板（单点=出生点），实际使用前需先录制。`keypoint_recorder.py` 订阅里程计，把机器人当前位姿写成 `fsm.waypoints`，因此录制的路径点天然位于里程计坐标系，比在稠密点云上用鼠标点选更准（尤其是层与层难以单独显示的多层场景）。录制有两种方式：
+
+**方式一：仿真内 2D Nav Goal 打点**（随内置仿真地图快速验证）
 
 ```bash
 # 1. 手动探索模式启动（默认 navi_mode:=1），在 RViz2 里用 2D Nav Goal 驱动机器人走遍各层
@@ -147,7 +162,64 @@ ros2 run scan_planner keypoint_recorder.py --odom /quad_0/body_pose \
 ros2 launch scan_planner run_goslam_multi.launch.py navi_mode:=2
 ```
 
+**方式二：遥控实走 + rosbag 回放打点**（推荐用于真实楼栋，作者建议的做法）
+
+无需在点云图上鼠标点选：先遥控机器人实走一遍并录包，再对着回放的里程计打点。
+
+```bash
+# 1. 遥控机器人走遍各层（含每段楼梯），录制里程计 bag；在每个目标路径点处停留约 1s
+#    真机里程计话题为 /LIO/odom_vehicle；仿真改用 /quad_0/body_pose
+#    可选：一并录制 /LIO/clouds_lidar /LIO/odom_imu，便于事后对照点云复核
+ros2 bag record -o building_tour /LIO/odom_vehicle
+
+# 2. 终端 A：暂停式播放，便于逐点步进
+ros2 bag play building_tour --start-paused
+
+# 3. 终端 B：对着回放的里程计打点（A 里用空格步进/暂停，机器人到停靠点后在 B 里按 a 记录）
+ros2 run scan_planner keypoint_recorder.py --odom /LIO/odom_vehicle \
+  --output $(ros2 pkg prefix scan_planner)/share/scan_planner/config/keypoints.multi.yaml
+#    按键：a/Enter 添加，l 列出，u 撤销，r/d 按下标替换/删除，s 保存，q 保存退出
+```
+
+**真机回放巡层**：真机用 `closed_loop`（真狗能爬楼；`open_loop` 仅用于运动学仿真），并显式传入录好的路径点文件：
+
+```bash
+ros2 launch scan_planner run.launch.py \
+  is_real_world:=true navi_mode:=2 controller_mode:=closed_loop sensor_type:=lidar \
+  keypoints_file:=$(ros2 pkg prefix scan_planner)/share/scan_planner/config/keypoints.multi.yaml
+```
+
 `keypoints.multi.yaml` 中的 `fsm.waypoints` 是 `[x, y, z, x, y, z, ...]` 的扁平浮点数组，坐标系为 `world`；`keypoint_recorder.py` 会以相同格式回写该文件。
+
+录制要点：
+
+- **z 抗抖动**：打点工具默认对 z 做 0.5s 窗口平均以抑制小跑步态的机身起伏（`--average-window` 可调，`0` 为瞬时值），x/y 取最新值；在每个路径点停留片刻可得到更干净的 z。
+- **每段楼层切换至少三个点**：楼梯底、楼梯顶、目标点，缺一不可。全局参考是过点的 min-snap，A\* 前端只在 XY 扩展、z 沿直线线性插值，唯有短分段才能贴合真实楼梯几何。
+- **坐标系一致**：路径点存于录制时的里程计 `world` 原点，回放导航时的定位必须与录制时同一世界原点（例如针对同一先验地图重定位），否则点位会整体偏移。
+- **免重新构建**：本仓库以 `--symlink-install` 构建，`keypoints.multi.yaml` 为软链，录制写入 install 路径即写回源文件，回放前无需再 `colcon build`。
+
+### 坐标系对应与点云地图初始位置（关键）
+
+打点录制能否正确回放，取决于**坐标系对应**而非路径点数值本身。SCAN-Planner 不做任何对齐：它默认 `body_pose` 里程计、点云地图和 `fsm.waypoints` 三者同处一个 `world` 坐标系。真机上栅格地图由实时点云经里程计变换到 `world`（`is_real_world:=true` 时 `grid_map.cloud_is_world=false`、`grid_map.need_extrinsic=true`）。一句话：**`world` 坐标系等同于里程计坐标系**，录制得到的路径点继承录制时 `/LIO/odom_vehicle` 所在的坐标系。
+
+**本质要求**：回放导航时的里程计坐标系必须与录制时是同一个物理坐标系；机器人的“出发点”只是把两者锚定在一起的基准。
+
+**出发点是完整位姿，尤其是 yaw**：里程计原点是 6 自由度位姿，对地面机器人即 `x, y, z（楼层）+ yaw（朝向）`。最易踩坑的是 **yaw**——若回放开机朝向与录制时不同，整个坐标系会绕原点旋转、所有路径点随之旋转，路线会斜切进墙体。仿真里的起始朝向即 `controllers.yaml` 中 `open_loop_controller` 的 `init_yaw`。
+
+落地有两种方式：
+
+- **有重定位（推荐，出发点可任意）**：定位针对先验点云地图重定位，实时里程计被表达在地图坐标系下；录制与回放都对同一先验地图重定位，机器狗即可从任意位置出发。
+- **无重定位（纯里程计，出发点必须固定）**：原点即开机位姿，每次开机都会重建，必须在**同一物理位姿（位置 + 朝向）**开机——用地面标记点定位置、用墙面或特征定朝向，该 home 位姿即录制与回放共用的原点。
+
+**点云地图初始位置配置**：
+
+- **真机**：由定位系统重定位到先验点云地图，`world` 系即地图系，本仓库无需配置地图偏移。
+- **仿真加载 PCD**：`map_generator` 的 `map_pub` 节点以 `frame_id: world` 发布点云，并提供 `map_offset_x/y/z` 参数**平移**点云以对齐里程计原点（仅平移；若两坐标系还存在 yaw 差异，需另行旋转点云或路径点）。`simulator.launch.py` 目前未把 `map_offset_*` 透出为 launch 参数（默认 `0.0`），需要时在该文件里为 `map_pub` 节点补上。
+- **仿真出生位姿**：`controllers.yaml` 中 `open_loop_controller` 的 `init_x/init_y/init_z/init_yaw` 必须等于“物理出发点在该 PCD `world` 系下的位姿”；多层预设为入口层 `-4.4, -2.5, 0.25, 0.0`。
+
+把真机录制的点云拿到仿真里验证时：要么把 `init_x/y/z/init_yaw` 设为机器狗起始位姿在该 PCD 系下的取值，要么用 `map_offset_*` 把 PCD 平移到里程计原点（朝向不一致时还需先旋转）。
+
+**回放前先验证**：在 RViz 里把录制的路径点（FSM 通过 `displayGoalPoint` 发布目标标记）叠加到点云地图上——对齐正确时每个点都落在对应楼层的空闲处，回放的录制里程计轨迹应沿真实走过的走廊与楼梯延伸而不切墙。整体平移偏差 ⇒ 平移未对齐（用 `map_offset_*` 或固定 home 点）；出现旋转或斜切 ⇒ **yaw** 未对齐（重定位或匹配 `init_yaw`）。
 
 ## Gazebo Fortress / Go2 仿真
 
