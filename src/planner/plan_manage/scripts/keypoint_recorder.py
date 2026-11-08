@@ -8,6 +8,7 @@ import select
 import sys
 import termios
 import tty
+from collections import deque
 
 import rclpy
 from nav_msgs.msg import Odometry
@@ -17,6 +18,8 @@ from rclpy.utilities import remove_ros_args
 
 
 DEFAULT_OUTPUT = os.path.join(os.getcwd(), "keypoints.yaml")
+DEFAULT_AVG_WINDOW = 0.5
+MAX_SAMPLES = 200
 
 
 def format_float(value):
@@ -34,23 +37,42 @@ def atomic_write(path, content):
 
 
 class KeypointRecorder(Node):
-    def __init__(self, odom_topic, output_path):
+    def __init__(self, odom_topic, output_path, avg_window=DEFAULT_AVG_WINDOW):
         super().__init__("keypoint_recorder")
         self.odom_topic = odom_topic
         self.output_path = os.path.abspath(output_path)
+        self.avg_window = max(0.0, float(avg_window))
         self.latest_odom = None
+        self.samples = deque(maxlen=MAX_SAMPLES)
         self.waypoints = []
         self.create_subscription(Odometry, odom_topic, self.odom_callback, qos_profile_sensor_data)
 
     def odom_callback(self, message):
         self.latest_odom = message
+        position = message.pose.pose.position
+        point = (float(position.x), float(position.y), float(position.z))
+        if not all(math.isfinite(value) for value in point):
+            return
+        stamp = message.header.stamp
+        sample_time = stamp.sec + stamp.nanosec * 1e-9
+        self.samples.append((sample_time, point))
+        if self.avg_window > 0.0:
+            cutoff = sample_time - self.avg_window
+            while self.samples and self.samples[0][0] < cutoff:
+                self.samples.popleft()
+        else:
+            while len(self.samples) > 1:
+                self.samples.popleft()
 
     def current_point(self):
-        if self.latest_odom is None:
+        if self.latest_odom is None or not self.samples:
             return None
-        position = self.latest_odom.pose.pose.position
-        point = (float(position.x), float(position.y), float(position.z))
-        return point if all(math.isfinite(value) for value in point) else None
+        # Keep the most recent horizontal position but average z over a short
+        # window: a trotting quadruped bobs its trunk up and down, and a single
+        # instantaneous z corrupts floor heights and stair-ramp waypoints.
+        latest_x, latest_y = self.samples[-1][1][:2]
+        avg_z = sum(sample[1][2] for sample in self.samples) / len(self.samples)
+        return (latest_x, latest_y, avg_z)
 
     def record_current(self):
         point = self.current_point()
@@ -97,6 +119,12 @@ class KeypointRecorder(Node):
     def run(self):
         if not sys.stdin.isatty():
             raise RuntimeError("keyboard control requires a TTY")
+        if self.avg_window > 0.0:
+            self.get_logger().info(
+                "Recording '%s'; z averaged over %.2fs window", self.odom_topic, self.avg_window)
+        else:
+            self.get_logger().info(
+                "Recording '%s'; instantaneous pose (z averaging disabled)", self.odom_topic)
         print("Enter/Space/a: add, r: replace, d: delete, u: undo, l: list, s: save, q: save+quit")
         settings = termios.tcgetattr(sys.stdin)
         tty.setcbreak(sys.stdin.fileno())
@@ -130,9 +158,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--odom", default="/LIO/odom_vehicle")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--average-window",
+        type=float,
+        default=DEFAULT_AVG_WINDOW,
+        help="seconds of odometry averaged for z to reject body-bob (0 = instantaneous)",
+    )
     arguments = parser.parse_args(remove_ros_args(args=sys.argv)[1:])
     rclpy.init(args=sys.argv)
-    recorder = KeypointRecorder(arguments.odom, arguments.output)
+    recorder = KeypointRecorder(arguments.odom, arguments.output, arguments.average_window)
     try:
         recorder.run()
     except (KeyboardInterrupt, RuntimeError) as error:
