@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Cache-Control" content="no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<title>SCAN-Planner Waypoint Studio</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: rgba(20, 26, 34, 0.92); --panel-border: #2b3644;
+    --text: #d7e0ea; --muted: #8a98a8; --accent: #ff3d68; --accent2: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg);
+    font-family: "Segoe UI", Roboto, Ubuntu, system-ui, sans-serif; color: var(--text); }
+  #app { position: fixed; inset: 0; }
+  #gl, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #overlay { pointer-events: none; }
+
+  #crosshair { position: fixed; left: 50%; top: 50%; width: 18px; height: 18px;
+    transform: translate(-50%, -50%); pointer-events: none; opacity: 0.6; z-index: 5; }
+  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: #fff;
+    box-shadow: 0 0 2px #000; }
+  #crosshair::before { left: 50%; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
+  #crosshair::after  { top: 50%; left: 0; height: 1px; width: 100%; transform: translateY(-50%); }
+
+  .panel { position: fixed; z-index: 10; background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 10px; padding: 12px 14px; backdrop-filter: blur(6px);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.45); }
+  #leftPanel { top: 14px; left: 14px; width: 302px; max-height: calc(100% - 28px);
+    display: flex; flex-direction: column; }
+  #helpPanel { bottom: 14px; left: 14px; width: 302px; font-size: 12px; line-height: 1.6; }
+  #statusPanel { top: 14px; right: 14px; font-size: 12px; min-width: 210px; }
+
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  h1 span { color: var(--accent); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+    margin: 14px 0 6px; font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .grow { flex: 1; }
+  button, label.btn { background: #1c2530; color: var(--text); border: 1px solid var(--panel-border);
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; transition: 0.12s;
+    display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
+  button:hover, label.btn:hover { border-color: var(--accent2); color: #fff; }
+  button.primary { background: #12314a; border-color: #1c5c86; }
+  button.primary:hover { background: #164566; }
+  button.danger:hover { border-color: var(--accent); color: #ffd7df; }
+  input.txt { flex: 1; min-width: 0; background: #0e1620; border: 1px solid var(--panel-border);
+    color: var(--text); border-radius: 5px; padding: 4px 6px; font-size: 11px; }
+  input[type="range"] { width: 100%; }
+  input.num { width: 52px; background: #0e1620; border: 1px solid var(--panel-border);
+    color: var(--text); border-radius: 5px; padding: 2px 4px; font-size: 11px; }
+
+  #wpList { overflow-y: auto; margin-top: 4px; border-top: 1px solid var(--panel-border); padding-top: 6px; }
+  .wpItem { display: flex; align-items: center; gap: 5px; padding: 3px 2px; border-radius: 5px;
+    font-size: 11px; font-variant-numeric: tabular-nums; }
+  .wpItem:hover { background: #182231; }
+  .wpItem.sel { background: #14324a; outline: 1px solid #1c5c86; }
+  .wpIdx { width: 18px; color: var(--accent); font-weight: 700; text-align: right; }
+  .wpAct { background: transparent; border: none; color: var(--muted); padding: 2px 4px; cursor: pointer; }
+  .wpAct:hover { color: #fff; }
+  .muted { color: var(--muted); }
+  .kbd { display: inline-block; background: #0e1620; border: 1px solid var(--panel-border);
+    border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 11px; color: #fff; }
+  .empty { color: var(--muted); font-size: 12px; padding: 8px 2px; text-align: center; }
+  .toggleRow { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; }
+  #dropHint { position: fixed; inset: 0; z-index: 50; display: none; align-items: center;
+    justify-content: center; background: rgba(13,17,23,0.85); font-size: 22px; color: var(--accent2);
+    border: 3px dashed var(--accent2); }
+  #toast { position: fixed; z-index: 60; left: 50%; bottom: 30px; transform: translateX(-50%);
+    background: #12314a; border: 1px solid #1c5c86; color: #fff; padding: 10px 18px; border-radius: 8px;
+    font-size: 13px; display: none; max-width: 80%; text-align: center; }
+  #fileBrowser { position: fixed; inset: 0; z-index: 55; display: none; align-items: center;
+    justify-content: center; background: rgba(0,0,0,0.5); }
+  #fbBox { width: min(560px, 92vw); max-height: 82vh; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px;
+    padding: 12px 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.55); }
+  #fbList { overflow-y: auto; margin-top: 8px; border-top: 1px solid var(--panel-border); padding-top: 6px; }
+  .fbRow { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 5px;
+    font-size: 12px; cursor: pointer; }
+  .fbRow:hover { background: #182231; }
+  .fbRow .ico { width: 18px; text-align: center; flex: none; }
+  .fbRow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fbRow.pcd .nm { color: var(--accent2); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+  <canvas id="overlay"></canvas>
+</div>
+<div id="crosshair"></div>
+<div id="dropHint">Drop a <b>.pcd</b> file to load</div>
+<div id="toast"></div>
+
+<div id="fileBrowser">
+  <div id="fbBox">
+    <div class="row" style="justify-content:space-between;">
+      <b id="fbTitle">Browse server files</b>
+      <button id="fbClose">✕</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <button id="fbUp">⬆ Up</button>
+      <span id="fbPath" class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">/</span>
+    </div>
+    <div id="fbList"></div>
+    <div class="muted" id="fbHint" style="font-size:11px;margin-top:8px;"></div>
+  </div>
+</div>
+
+<div class="panel" id="leftPanel">
+  <h1>SCAN&#8209;Planner <span>Waypoint Studio</span></h1>
+  <div class="row">
+    <button id="browseBtn" class="btn primary grow" title="Load a .pcd cloud file">🗂 Browse files…</button>
+  </div>
+  <div class="row" style="margin-top:6px;">
+    <input class="txt" id="pcdUrl" placeholder="path/URL: /map.pcd or waypoints.yaml" spellcheck="false" />
+    <button id="loadUrl">Load</button>
+  </div>
+
+  <h2>Waypoints <span class="muted" id="wpCount">(0)</span></h2>
+  <div class="row" style="margin-bottom:6px;">
+    <button id="loadWpBtn" class="grow" title="Load waypoints from a .yaml/.csv file">⬆ Load waypoints…</button>
+  </div>
+  <div class="row" style="margin-bottom:6px;">
+    <button id="addCenter" title="Add at crosshair (P)">＋ Crosshair</button>
+    <button id="undoBtn" title="Remove last (Z)">↶ Undo</button>
+    <button id="clearBtn" class="danger" title="Remove all">✕ Clear</button>
+  </div>
+  <div id="wpList"><div class="empty">No waypoints yet — left&#8209;click the cloud to mark one.</div></div>
+
+  <h2>Export</h2>
+  <div class="row">
+    <button id="exportYaml" class="primary grow">⬇ keypoints.yaml</button>
+    <button id="exportCsv">⬇ CSV</button>
+  </div>
+  <div class="row" style="margin-top:6px;">
+    <input class="txt grow" id="savePath" value="src/simulator/map_generator/configs/keypoints.yaml" spellcheck="false" title="Repo-relative path to write (.yaml/.yml/.csv)" />
+    <button id="saveRepo" title="Write the file straight into the repo via the local server — no browser download dialog">💾 Save</button>
+  </div>
+  <div class="toggleRow" style="margin-top:6px;"><input type="checkbox" id="bodyOffset" checked><label for="bodyOffset">Body-height Z offset (m)</label><input class="num" type="number" id="bodyOffsetVal" value="0.3" step="0.05" style="width:64px;margin-left:8px;"></div>
+
+  <h2>View</h2>
+  <div class="toggleRow"><span style="width:76px;">Point size</span><input type="range" id="pointSize" min="1" max="12" step="0.5" value="2.5"></div>
+  <div class="toggleRow"><span style="width:76px;">Pick radius</span><input type="range" id="pickThresh" min="0.01" max="1.0" step="0.01" value="0.10"></div>
+  <div class="toggleRow"><span style="width:76px;">Move speed</span><input type="range" id="speed" min="0.1" max="20" step="0.1" value="9"><span id="speedVal" class="muted">9.0</span></div>
+  <div class="toggleRow"><input type="checkbox" id="snapCloud" checked><label for="snapCloud">Snap clicks to nearest cloud point</label></div>
+  <div class="toggleRow"><input type="checkbox" id="heightColor" checked><label for="heightColor">Height colormap</label></div>
+
+  <h2>Model orientation</h2>
+  <div class="toggleRow"><span style="width:56px;">Rot X°</span><input class="num" type="number" id="rotX" value="0" step="15" style="width:74px;"></div>
+  <div class="toggleRow"><span style="width:56px;">Rot Y°</span><input class="num" type="number" id="rotY" value="0" step="15" style="width:74px;"></div>
+  <div class="toggleRow"><span style="width:56px;">Rot Z°</span><input class="num" type="number" id="rotZ" value="0" step="15" style="width:74px;"></div>
+  <div class="row" style="margin-top:6px;flex-wrap:wrap;">
+    <button id="rotZup" title="Set X=+90° to turn a Y-up cloud into Z-up">Y-up→Z-up</button>
+    <button id="rotReset">Reset</button>
+    <button id="rotReframe">⟳ Re-frame</button>
+  </div>
+  <div class="muted" style="font-size:11px;margin-top:6px;">Rotates the cloud about the origin (order X→Y→Z). Marked waypoints rotate with it, so exports stay in the corrected frame.</div>
+</div>
+
+<div class="panel" id="helpPanel">
+  <div><span class="kbd">W</span><span class="kbd">S</span> forward / back &nbsp; <span class="kbd">A</span><span class="kbd">D</span> strafe left / right</div>
+  <div><span class="kbd">Q</span><span class="kbd">E</span> turn left / right &nbsp; <span class="kbd">Shift</span> boost</div>
+  <div><b>Right&#8209;drag</b> look 360° &nbsp; <b>Wheel</b> zoom in/out</div>
+  <div><b>Left&#8209;click</b> mark waypoint &nbsp; <span class="kbd">P</span> drop at crosshair</div>
+  <div><span class="kbd">Z</span> undo &nbsp; <span class="kbd">L</span> fly to selected</div>
+</div>
+
+<div class="panel" id="statusPanel">
+  <div id="stCloud" class="muted">No cloud loaded</div>
+  <div id="stPos" class="muted">cam: —</div>
+  <div id="stSel" class="muted">sel: none</div>
+</div>
+
+<script>
+"use strict";
+// ===========================================================================
+// SCAN-Planner Waypoint Studio — dependency-free (vanilla WebGL) PCD viewer.
+// Load a .pcd, fly through it WoW-style, click to mark fsm.waypoints.
+// ===========================================================================
+const $ = (id) => document.getElementById(id);
+const glCanvas = $('gl'), overlay = $('overlay');
+const gl = glCanvas.getContext('webgl', { antialias: true });
+const ctx2d = overlay.getContext('2d');
+if (!gl) { $('stCloud').textContent = 'WebGL not available in this browser'; }
+
+// --- state -----------------------------------------------------------------
+let positions = null;      // Float32Array xyz interleaved (after model rotation)
+let basePositions = null;  // original parsed xyz, before model rotation
+let colors = null;         // Float32Array rgb interleaved
+let pointCount = 0;
+let curMat = new Float32Array([1,0,0, 0,1,0, 0,0,1]); // current model rotation (row-major 3x3)
+let posBuf = null, colBuf = null;
+let bbox = { min: [0,0,0], max: [0,0,0], center: [0,0,0], diag: 10 };
+
+const waypoints = [];      // { pos:[x,y,z] }
+let selected = -1;
+
+const cam = { pos: [0, 2, 6], yaw: 0, pitch: 0 };
+let moveSpeed = 9.0, markerScale = 0.08, pickThreshold = 0.10, pointSize = 2.5;
+const keys = Object.create(null);
+let dragging = false, lastMouse = { x: 0, y: 0 }, leftDown = null;
+
+// --- mat4 (column-major, gl-matrix compatible) -----------------------------
+function mat4() { return new Float32Array(16); }
+function perspective(out, fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  out[0]=f/aspect; out[1]=0; out[2]=0; out[3]=0;
+  out[4]=0; out[5]=f; out[6]=0; out[7]=0;
+  out[8]=0; out[9]=0; out[10]=(far+near)*nf; out[11]=-1;
+  out[12]=0; out[13]=0; out[14]=2*far*near*nf; out[15]=0;
+  return out;
+}
+function lookAt(out, eye, center, up) {
+  let z0=eye[0]-center[0], z1=eye[1]-center[1], z2=eye[2]-center[2];
+  let len=1/Math.hypot(z0,z1,z2); z0*=len; z1*=len; z2*=len;
+  let x0=up[1]*z2-up[2]*z1, x1=up[2]*z0-up[0]*z2, x2=up[0]*z1-up[1]*z0;
+  len=Math.hypot(x0,x1,x2);
+  if (!len) { x0=0; x1=0; x2=0; } else { len=1/len; x0*=len; x1*=len; x2*=len; }
+  const y0=z1*x2-z2*x1, y1=z2*x0-z0*x2, y2=z0*x1-z1*x0;
+  out[0]=x0; out[1]=y0; out[2]=z0; out[3]=0;
+  out[4]=x1; out[5]=y1; out[6]=z1; out[7]=0;
+  out[8]=x2; out[9]=y2; out[10]=z2; out[11]=0;
+  out[12]=-(x0*eye[0]+x1*eye[1]+x2*eye[2]);
+  out[13]=-(y0*eye[0]+y1*eye[1]+y2*eye[2]);
+  out[14]=-(z0*eye[0]+z1*eye[1]+z2*eye[2]);
+  out[15]=1;
+  return out;
+}
+function multiply(out, a, b) {
+  const a00=a[0],a01=a[1],a02=a[2],a03=a[3], a10=a[4],a11=a[5],a12=a[6],a13=a[7],
+        a20=a[8],a21=a[9],a22=a[10],a23=a[11], a30=a[12],a31=a[13],a32=a[14],a33=a[15];
+  for (let i = 0; i < 4; i++) {
+    const b0=b[i*4], b1=b[i*4+1], b2=b[i*4+2], b3=b[i*4+3];
+    out[i*4]  = b0*a00+b1*a10+b2*a20+b3*a30;
+    out[i*4+1]= b0*a01+b1*a11+b2*a21+b3*a31;
+    out[i*4+2]= b0*a02+b1*a12+b2*a22+b3*a32;
+    out[i*4+3]= b0*a03+b1*a13+b2*a23+b3*a33;
+  }
+  return out;
+}
+function invert(out, a) {
+  const a00=a[0],a01=a[1],a02=a[2],a03=a[3], a10=a[4],a11=a[5],a12=a[6],a13=a[7],
+        a20=a[8],a21=a[9],a22=a[10],a23=a[11], a30=a[12],a31=a[13],a32=a[14],a33=a[15];
+  const b00=a00*a11-a01*a10, b01=a00*a12-a02*a10, b02=a00*a13-a03*a10,
+        b03=a01*a12-a02*a11, b04=a01*a13-a03*a11, b05=a02*a13-a03*a12,
+        b06=a20*a31-a21*a30, b07=a20*a32-a22*a30, b08=a20*a33-a23*a30,
+        b09=a21*a32-a22*a31, b10=a21*a33-a23*a31, b11=a22*a33-a23*a32;
+  let det=b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;
+  if (!det) return null;
+  det=1/det;
+  out[0]=(a11*b11-a12*b10+a13*b09)*det; out[1]=(a02*b10-a01*b11-a03*b09)*det;
+  out[2]=(a31*b05-a32*b04+a33*b03)*det; out[3]=(a22*b04-a21*b05-a23*b03)*det;
+  out[4]=(a12*b08-a10*b11-a13*b07)*det; out[5]=(a00*b11-a02*b08+a03*b07)*det;
+  out[6]=(a32*b02-a30*b05-a33*b01)*det; out[7]=(a20*b05-a22*b02+a23*b01)*det;
+  out[8]=(a10*b10-a11*b08+a13*b06)*det; out[9]=(a01*b08-a00*b10-a03*b06)*det;
+  out[10]=(a30*b04-a31*b02+a33*b00)*det; out[11]=(a21*b02-a20*b04-a23*b00)*det;
+  out[12]=(a11*b07-a10*b09-a12*b06)*det; out[13]=(a00*b09-a01*b07+a02*b06)*det;
+  out[14]=(a31*b01-a30*b03-a32*b00)*det; out[15]=(a20*b03-a21*b01+a22*b00)*det;
+  return out;
+}
+// Z-up world: +Z is vertical (matches the point cloud / ROS convention).
+// yaw rotates around +Z (turn left/right in place), pitch is elevation above the XY plane.
+function forwardVec() {
+  const cp = Math.cos(cam.pitch);
+  return [cp*Math.cos(cam.yaw), cp*Math.sin(cam.yaw), Math.sin(cam.pitch)];
+}
+function rightVec() { return [Math.sin(cam.yaw), -Math.cos(cam.yaw), 0]; }
+
+// --- shaders ---------------------------------------------------------------
+const VS = `attribute vec3 aPos; attribute vec3 aColor; uniform mat4 uVP; uniform float uSize;
+varying vec3 vColor; void main(){ gl_Position = uVP*vec4(aPos,1.0); gl_PointSize = uSize; vColor = aColor; }`;
+const FS = `precision mediump float; varying vec3 vColor; uniform float uRound;
+void main(){ if(uRound>0.5){ vec2 c=gl_PointCoord-vec2(0.5); if(dot(c,c)>0.25) discard; } gl_FragColor=vec4(vColor,1.0); }`;
+let prog, loc = {};
+function initGL() {
+  const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, VS); gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, FS); gl.compileShader(fs);
+  if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(vs));
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(fs));
+  prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  gl.useProgram(prog);
+  loc.aPos = gl.getAttribLocation(prog, 'aPos');
+  loc.aColor = gl.getAttribLocation(prog, 'aColor');
+  loc.uVP = gl.getUniformLocation(prog, 'uVP');
+  loc.uSize = gl.getUniformLocation(prog, 'uSize');
+  loc.uRound = gl.getUniformLocation(prog, 'uRound');
+  posBuf = gl.createBuffer(); colBuf = gl.createBuffer();
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.051, 0.067, 0.09, 1);
+}
+
+// --- PCD parsing -----------------------------------------------------------
+function parsePCD(buffer) {
+  const u8 = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  let offset = 0;
+  const dec = new TextDecoder();
+  const H = {};
+  let dataMode = 'ascii', numPoints = 0;
+  const readLine = () => {
+    const start = offset;
+    while (offset < u8.length && u8[offset] !== 10) offset++;
+    let s = dec.decode(u8.subarray(start, offset)); offset++;
+    if (s.endsWith('\r')) s = s.slice(0, -1);
+    return s;
+  };
+  while (offset < u8.length) {
+    const line = readLine();
+    if (!line.length || line[0] === '#') continue;
+    const p = line.split(/\s+/), k = p[0].toUpperCase();
+    if (k === 'FIELDS') H.fields = p.slice(1);
+    else if (k === 'SIZE') H.size = p.slice(1).map(Number);
+    else if (k === 'TYPE') H.type = p.slice(1);
+    else if (k === 'COUNT') H.count = p.slice(1).map(Number);
+    else if (k === 'POINTS') numPoints = parseInt(p[1], 10);
+    else if (k === 'WIDTH') H.width = parseInt(p[1], 10);
+    else if (k === 'HEIGHT') H.height = parseInt(p[1], 10);
+    else if (k === 'DATA') { dataMode = (p[1] || 'ascii').toLowerCase(); break; }
+  }
+  if (!numPoints) numPoints = (H.width || 0) * (H.height || 1);
+  if (dataMode === 'binary_compressed') throw new Error('binary_compressed PCD not supported');
+  const names = H.fields || ['x','y','z'];
+  const sizes = H.size || names.map(() => 4);
+  const types = H.type || names.map(() => 'F');
+  const counts = H.count || names.map(() => 1);
+  const stride = sizes.reduce((a, s, i) => a + s * counts[i], 0);
+  const foff = {}; let o = 0;
+  for (let i = 0; i < names.length; i++) { foff[names[i]] = { off: o, size: sizes[i], type: types[i] }; o += sizes[i] * counts[i]; }
+
+  const pos = new Float32Array(numPoints * 3);
+  let rgb = null;
+  const hasRgb = !!foff['rgb'];
+  if (hasRgb) rgb = new Float32Array(numPoints * 3);
+
+  const readNum = (addr, fo) => {
+    if (!fo) return 0;
+    if (fo.type === 'F') return fo.size === 8 ? view.getFloat64(addr, true) : view.getFloat32(addr, true);
+    if (fo.type === 'U') return fo.size === 4 ? view.getUint32(addr, true) : fo.size === 2 ? view.getUint16(addr, true) : view.getUint8(addr);
+    if (fo.type === 'I') return fo.size === 4 ? view.getInt32(addr, true) : fo.size === 2 ? view.getInt16(addr, true) : view.getInt8(addr);
+    return 0;
+  };
+
+  if (dataMode === 'binary') {
+    const base0 = offset;
+    const fx = foff['x'], fy = foff['y'], fz = foff['z'];
+    const fast = fx && fy && fz && fx.size === 4 && fy.size === 4 && fz.size === 4 &&
+                 fx.type === 'F' && fy.type === 'F' && fz.type === 'F' &&
+                 fx.off === 0 && fy.off === 4 && fz.off === 8 && stride % 4 === 0 && base0 % 4 === 0;
+    if (fast) {
+      const f32 = new Float32Array(buffer, base0, numPoints * (stride / 4));
+      const st = stride / 4;
+      for (let p = 0; p < numPoints; p++) { pos[p*3] = f32[p*st]; pos[p*3+1] = f32[p*st+1]; pos[p*3+2] = f32[p*st+2]; }
+    } else {
+      for (let p = 0; p < numPoints; p++) {
+        const b = base0 + p * stride;
+        pos[p*3] = readNum(b + fx.off, fx); pos[p*3+1] = readNum(b + fy.off, fy); pos[p*3+2] = readNum(b + fz.off, fz);
+      }
+    }
+    if (hasRgb) {
+      const fr = foff['rgb'];
+      for (let p = 0; p < numPoints; p++) {
+        const v = readNum(base0 + p*stride + fr.off, fr) | 0;
+        rgb[p*3] = ((v >> 16) & 255) / 255; rgb[p*3+1] = ((v >> 8) & 255) / 255; rgb[p*3+2] = (v & 255) / 255;
+      }
+    }
+  } else { // ascii
+    let idx = 0;
+    const xi = names.indexOf('x'), yi = names.indexOf('y'), zi = names.indexOf('z'), ri = names.indexOf('rgb');
+    while (offset < u8.length && idx < numPoints) {
+      const line = readLine(); if (!line.length) continue;
+      const t = line.split(/\s+/);
+      pos[idx*3] = parseFloat(t[xi]); pos[idx*3+1] = parseFloat(t[yi]); pos[idx*3+2] = parseFloat(t[zi]);
+      if (hasRgb && ri >= 0) { const v = parseFloat(t[ri]) | 0;
+        rgb[idx*3] = ((v>>16)&255)/255; rgb[idx*3+1] = ((v>>8)&255)/255; rgb[idx*3+2] = (v&255)/255; }
+      idx++;
+    }
+    numPoints = idx;
+  }
+  return { pos, rgb, count: numPoints };
+}
+
+// --- colormap --------------------------------------------------------------
+const STOPS = [[0,0.10,0.35,0.75],[0.25,0.15,0.70,0.90],[0.5,0.20,0.85,0.45],[0.75,0.95,0.90,0.20],[1,0.95,0.30,0.20]];
+function colormap(out, t) {
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  for (let i = 1; i < STOPS.length; i++) {
+    if (t <= STOPS[i][0]) {
+      const a = STOPS[i-1], b = STOPS[i], f = (t - a[0]) / (b[0] - a[0]);
+      out[0] = a[1]+(b[1]-a[1])*f; out[1] = a[2]+(b[2]-a[2])*f; out[2] = a[3]+(b[3]-a[3])*f; return out;
+    }
+  }
+  const l = STOPS[STOPS.length-1]; out[0]=l[1]; out[1]=l[2]; out[2]=l[3]; return out;
+}
+
+// --- cloud upload ----------------------------------------------------------
+function computeBBox() {
+  const min = [Infinity,Infinity,Infinity], max = [-Infinity,-Infinity,-Infinity];
+  for (let i = 0; i < pointCount; i++) {
+    const x=positions[i*3], y=positions[i*3+1], z=positions[i*3+2];
+    if (!isFinite(x)||!isFinite(y)||!isFinite(z)) continue;
+    if (x<min[0])min[0]=x; if (y<min[1])min[1]=y; if (z<min[2])min[2]=z;
+    if (x>max[0])max[0]=x; if (y>max[1])max[1]=y; if (z>max[2])max[2]=z;
+  }
+  if (min[0]===Infinity){min[0]=min[1]=min[2]=-1;max[0]=max[1]=max[2]=1;}
+  bbox.min=min; bbox.max=max;
+  bbox.center=[(min[0]+max[0])/2,(min[1]+max[1])/2,(min[2]+max[2])/2];
+  bbox.diag=Math.hypot(max[0]-min[0],max[1]-min[1],max[2]-min[2])||10;
+}
+function buildColors() {
+  colors = new Float32Array(pointCount * 3);
+  const c = [0,0,0];
+  const useHeight = $('heightColor').checked;
+  const zMin = bbox.min[2], zSpan = Math.max(bbox.max[2]-bbox.min[2], 1e-6);
+  for (let i = 0; i < pointCount; i++) {
+    if (useHeight || !baseRgb) { colormap(c, (positions[i*3+2]-zMin)/zSpan); }
+    else { c[0]=baseRgb[i*3]; c[1]=baseRgb[i*3+1]; c[2]=baseRgb[i*3+2]; }
+    colors[i*3]=c[0]; colors[i*3+1]=c[1]; colors[i*3+2]=c[2];
+  }
+}
+let baseRgb = null;
+
+// --- model orientation (3-axis rotation baked into the coordinates) --------
+function rotMatrix(rx, ry, rz) { // radians; R = Rz * Ry * Rx (X applied first)
+  const cx=Math.cos(rx), sx=Math.sin(rx), cy=Math.cos(ry), sy=Math.sin(ry), cz=Math.cos(rz), sz=Math.sin(rz);
+  const a00=cy, a01=sy*sx, a02=sy*cx, a10=0, a11=cx, a12=-sx, a20=-sy, a21=cy*sx, a22=cy*cx;
+  return new Float32Array([
+    cz*a00 - sz*a10, cz*a01 - sz*a11, cz*a02 - sz*a12,
+    sz*a00 + cz*a10, sz*a01 + cz*a11, sz*a02 + cz*a12,
+    a20, a21, a22
+  ]);
+}
+function transpose3(m){ return new Float32Array([m[0],m[3],m[6], m[1],m[4],m[7], m[2],m[5],m[8]]); }
+function mat3mul(A,B){ // A*B (row-major)
+  const o=new Float32Array(9);
+  for(let r=0;r<3;r++)for(let c=0;c<3;c++)
+    o[r*3+c]=A[r*3]*B[c]+A[r*3+1]*B[3+c]+A[r*3+2]*B[6+c];
+  return o;
+}
+function applyMat3(m,p){ // p = [x,y,z], rotated in place
+  const x=p[0],y=p[1],z=p[2];
+  p[0]=m[0]*x+m[1]*y+m[2]*z; p[1]=m[3]*x+m[4]*y+m[5]*z; p[2]=m[6]*x+m[7]*y+m[8]*z;
+}
+function rotMatrixFromInputs(){
+  const d=Math.PI/180;
+  return rotMatrix((parseFloat($('rotX').value)||0)*d, (parseFloat($('rotY').value)||0)*d, (parseFloat($('rotZ').value)||0)*d);
+}
+function bakePositions(m){
+  for(let i=0;i<pointCount;i++){
+    const x=basePositions[i*3], y=basePositions[i*3+1], z=basePositions[i*3+2];
+    positions[i*3]  =m[0]*x+m[1]*y+m[2]*z;
+    positions[i*3+1]=m[3]*x+m[4]*y+m[5]*z;
+    positions[i*3+2]=m[6]*x+m[7]*y+m[8]*z;
+  }
+}
+function uploadCloud(){
+  computeBBox(); buildColors();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, colBuf); gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+  markerScale = Math.max(0.03, bbox.diag * 0.004);
+  const n = [bbox.max[0]-bbox.min[0], bbox.max[1]-bbox.min[1], bbox.max[2]-bbox.min[2]];
+  $('stCloud').textContent = pointCount.toLocaleString() + ' pts · ' + n[0].toFixed(1)+'×'+n[1].toFixed(1)+'×'+n[2].toFixed(1)+' m';
+  $('stCloud').classList.remove('muted');
+}
+function setCloud(data) {
+  basePositions = data.pos; pointCount = data.count; baseRgb = data.rgb;
+  positions = new Float32Array(basePositions.length);
+  curMat = rotMatrixFromInputs();
+  bakePositions(curMat);
+  uploadCloud();
+  frameCloud();
+}
+function onRotChange() {
+  if (!basePositions) return;
+  const newMat = rotMatrixFromInputs();
+  const delta = mat3mul(newMat, transpose3(curMat)); // carry existing waypoints along with the model
+  for (const w of waypoints) applyMat3(delta, w.pos);
+  curMat = newMat;
+  bakePositions(curMat);
+  uploadCloud();
+  refreshList();
+}
+function frameCloud() {
+  const c = bbox.center, d = bbox.diag;
+  cam.pos = [c[0] - d*0.35, c[1] - d*0.20, c[2] + d*0.30];
+  // look at center (Z-up)
+  const dir = [c[0]-cam.pos[0], c[1]-cam.pos[1], c[2]-cam.pos[2]];
+  const horiz = Math.hypot(dir[0], dir[1]);
+  cam.yaw = Math.atan2(dir[1], dir[0]);
+  cam.pitch = Math.atan2(dir[2], horiz);
+}
+
+// --- render ----------------------------------------------------------------
+const proj = mat4(), viewM = mat4(), vp = mat4(), invVP = mat4();
+function render() {
+  if (!gl) return;
+  gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const aspect = glCanvas.width / glCanvas.height;
+  const far = Math.max(2000, bbox.diag * 12);
+  perspective(proj, 60 * Math.PI/180, aspect, 0.02, far);
+  const f = forwardVec();
+  const rv = rightVec();
+  // Camera up derived from yaw/pitch (not a fixed world up) so full 360deg
+  // pitch rolls over smoothly instead of degenerating when looking straight up/down.
+  const upv = [ rv[1]*f[2]-rv[2]*f[1], rv[2]*f[0]-rv[0]*f[2], rv[0]*f[1]-rv[1]*f[0] ];
+  lookAt(viewM, cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], upv);
+  multiply(vp, proj, viewM);
+
+  gl.useProgram(prog);
+  gl.uniformMatrix4fv(loc.uVP, false, vp);
+
+  if (pointCount) {
+    gl.uniform1f(loc.uSize, pointSize);
+    gl.uniform1f(loc.uRound, pointSize >= 2 ? 1 : 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.enableVertexAttribArray(loc.aPos); gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colBuf); gl.enableVertexAttribArray(loc.aColor); gl.vertexAttribPointer(loc.aColor, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, pointCount);
+  }
+  drawMarkers();
+  drawOverlay();
+  $('stPos').textContent = 'cam: ' + cam.pos[0].toFixed(2)+', '+cam.pos[1].toFixed(2)+', '+cam.pos[2].toFixed(2);
+}
+
+let mPosBuf = null, mColBuf = null;
+function drawMarkers() {
+  if (!waypoints.length) return;
+  if (!mPosBuf) { mPosBuf = gl.createBuffer(); mColBuf = gl.createBuffer(); }
+  const n = waypoints.length;
+  const p = new Float32Array(n*3), c = new Float32Array(n*3);
+  for (let i = 0; i < n; i++) {
+    const w = waypoints[i].pos;
+    p[i*3]=w[0]; p[i*3+1]=w[1]; p[i*3+2]=w[2];
+    if (i === selected) { c[i*3]=1; c[i*3+1]=1; c[i*3+2]=0.2; }
+    else { c[i*3]=1; c[i*3+1]=0.24; c[i*3+2]=0.41; }
+  }
+  gl.disable(gl.DEPTH_TEST);
+  gl.uniform1f(loc.uSize, 12); gl.uniform1f(loc.uRound, 1);
+  gl.bindBuffer(gl.ARRAY_BUFFER, mPosBuf); gl.bufferData(gl.ARRAY_BUFFER, p, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(loc.aPos); gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, mColBuf); gl.bufferData(gl.ARRAY_BUFFER, c, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(loc.aColor); gl.vertexAttribPointer(loc.aColor, 3, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.POINTS, 0, n);
+  gl.enable(gl.DEPTH_TEST);
+}
+
+function projectToScreen(p) {
+  const x=p[0], y=p[1], z=p[2];
+  const cw = vp[3]*x + vp[7]*y + vp[11]*z + vp[15];
+  if (cw <= 0) return null;
+  const cx = vp[0]*x + vp[4]*y + vp[8]*z + vp[12];
+  const cy = vp[1]*x + vp[5]*y + vp[9]*z + vp[13];
+  const nx = cx/cw, ny = cy/cw;
+  if (nx < -1.2 || nx > 1.2 || ny < -1.2 || ny > 1.2) return null;
+  return { x: (nx*0.5+0.5)*overlay.width/DPR, y: (-ny*0.5+0.5)*overlay.height/DPR };
+}
+function drawOverlay() {
+  ctx2d.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx2d.clearRect(0, 0, overlay.width/DPR, overlay.height/DPR);
+  ctx2d.font = 'bold 12px Segoe UI, sans-serif';
+  ctx2d.textAlign = 'center'; ctx2d.textBaseline = 'middle';
+  waypoints.forEach((w, i) => {
+    const s = projectToScreen(w.pos);
+    if (!s) return;
+    ctx2d.beginPath(); ctx2d.arc(s.x, s.y, 9, 0, Math.PI*2);
+    ctx2d.fillStyle = i === selected ? '#ffd400' : 'rgba(255,61,104,0.92)';
+    ctx2d.fill(); ctx2d.lineWidth = 1.5; ctx2d.strokeStyle = '#0d1117'; ctx2d.stroke();
+    ctx2d.fillStyle = '#0d1117'; ctx2d.fillText(String(i+1), s.x, s.y+0.5);
+  });
+  drawAxisGizmo();
+}
+
+// --- axis orientation gizmo (bottom-right corner) --------------------------
+// Projects the world X/Y/Z axes through the camera basis (right/up/forward) so
+// it reads like a 3D compass: axes pointing toward the viewer are bright and on
+// top, axes pointing away are dimmed. Colors follow the RGB = XYZ convention.
+function drawAxisGizmo() {
+  const W = overlay.width / DPR, H = overlay.height / DPR;
+  const R = 30, cx = W - 46, cy = H - 46;
+  const f = forwardVec(), r = rightVec();
+  const u = [ r[1]*f[2]-r[2]*f[1], r[2]*f[0]-r[0]*f[2], r[0]*f[1]-r[1]*f[0] ]; // up = right x forward
+  const dot = (a,b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+  const axes = [
+    { v:[1,0,0], c:'#ff5252', t:'X' },
+    { v:[0,1,0], c:'#5be36a', t:'Y' },
+    { v:[0,0,1], c:'#4da3ff', t:'Z' },
+  ].map(a => ({ c:a.c, t:a.t, sx: dot(a.v, r), sy: -dot(a.v, u), depth: dot(a.v, f) }));
+
+  ctx2d.save();
+  ctx2d.beginPath(); ctx2d.arc(cx, cy, R + 9, 0, Math.PI*2);
+  ctx2d.fillStyle = 'rgba(13,17,23,0.40)'; ctx2d.fill();
+  ctx2d.lineWidth = 1; ctx2d.strokeStyle = 'rgba(255,255,255,0.12)'; ctx2d.stroke();
+
+  axes.sort((a,b) => b.depth - a.depth); // away-from-viewer first, toward-viewer last (on top)
+  ctx2d.lineCap = 'round';
+  ctx2d.font = 'bold 11px Segoe UI, sans-serif';
+  ctx2d.textAlign = 'center'; ctx2d.textBaseline = 'middle';
+  axes.forEach(a => {
+    const nlen = Math.hypot(a.sx, a.sy);
+    const ux = nlen > 1e-4 ? a.sx/nlen : 0, uy = nlen > 1e-4 ? a.sy/nlen : 0;
+    const tipx = cx + a.sx*R, tipy = cy + a.sy*R;
+    const toward = a.depth < 0; // pointing out of the screen, toward the viewer
+    ctx2d.strokeStyle = a.c; ctx2d.lineWidth = 2;
+    ctx2d.globalAlpha = 0.22; // faint negative tail
+    ctx2d.beginPath(); ctx2d.moveTo(cx, cy); ctx2d.lineTo(cx - a.sx*R, cy - a.sy*R); ctx2d.stroke();
+    ctx2d.globalAlpha = toward ? 1 : 0.5; // positive axis
+    ctx2d.beginPath(); ctx2d.moveTo(cx, cy); ctx2d.lineTo(tipx, tipy); ctx2d.stroke();
+    if (nlen > 0.18) { // arrowhead (skipped when the axis points almost straight at/away)
+      const ang = Math.atan2(a.sy, a.sx), s = 6;
+      ctx2d.fillStyle = a.c;
+      ctx2d.beginPath();
+      ctx2d.moveTo(tipx, tipy);
+      ctx2d.lineTo(tipx - s*Math.cos(ang - 0.42), tipy - s*Math.sin(ang - 0.42));
+      ctx2d.lineTo(tipx - s*Math.cos(ang + 0.42), tipy - s*Math.sin(ang + 0.42));
+      ctx2d.closePath(); ctx2d.fill();
+    }
+    ctx2d.globalAlpha = toward ? 1 : 0.65; // label just past the tip
+    ctx2d.fillStyle = a.c;
+    ctx2d.fillText(a.t, tipx + ux*11, tipy + uy*11);
+  });
+  ctx2d.globalAlpha = 1; ctx2d.fillStyle = '#dfe7f0';
+  ctx2d.beginPath(); ctx2d.arc(cx, cy, 2.4, 0, Math.PI*2); ctx2d.fill();
+  ctx2d.restore();
+}
+
+// --- loop ------------------------------------------------------------------
+let DPR = 1, last = performance.now();
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.floor(innerWidth * DPR), h = Math.floor(innerHeight * DPR);
+  glCanvas.width = w; glCanvas.height = h; overlay.width = w; overlay.height = h;
+}
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  move(dt);
+  render();
+}
+const _f = [0,0,0], _r = [0,0,0];
+const TURN_RATE = 1.6; // rad/s for Q/E turning
+function move(dt) {
+  const f = forwardVec(), r = rightVec();
+  let vx=0, vy=0, vz=0;
+  if (keys['KeyW']) { vx+=f[0]; vy+=f[1]; vz+=f[2]; }
+  if (keys['KeyS']) { vx-=f[0]; vy-=f[1]; vz-=f[2]; }
+  if (keys['KeyD']) { vx+=r[0]; vy+=r[1]; vz+=r[2]; }   // strafe right
+  if (keys['KeyA']) { vx-=r[0]; vy-=r[1]; vz-=r[2]; }   // strafe left
+  const len = Math.hypot(vx,vy,vz);
+  if (len > 0) {
+    const boost = (keys['ShiftLeft']||keys['ShiftRight']) ? 5 : 1;
+    const s = moveSpeed * boost * dt / len;
+    cam.pos[0]+=vx*s; cam.pos[1]+=vy*s; cam.pos[2]+=vz*s;
+  }
+  // Q/E turn (yaw) in place: Q = left, E = right.
+  const tb = (keys['ShiftLeft']||keys['ShiftRight']) ? 2 : 1;
+  if (keys['KeyQ']) cam.yaw += TURN_RATE * tb * dt;
+  if (keys['KeyE']) cam.yaw -= TURN_RATE * tb * dt;
+}
+
+// --- picking ---------------------------------------------------------------
+function pickAt(clientX, clientY) {
+  const ndcx = (clientX / innerWidth) * 2 - 1;
+  const ndcy = -((clientY / innerHeight) * 2 - 1);
+  const inv = invert(invVP, vp);
+  if (!inv) return null;
+  const unp = (nx, ny, nz) => {
+    const x=inv[0]*nx+inv[4]*ny+inv[8]*nz+inv[12], y=inv[1]*nx+inv[5]*ny+inv[9]*nz+inv[13],
+          z=inv[2]*nx+inv[6]*ny+inv[10]*nz+inv[14], w=inv[3]*nx+inv[7]*ny+inv[11]*nz+inv[15];
+    return [x/w, y/w, z/w];
+  };
+  const near = unp(ndcx, ndcy, -1), far = unp(ndcx, ndcy, 1);
+  let dx=far[0]-near[0], dy=far[1]-near[1], dz=far[2]-near[2];
+  const dl = Math.hypot(dx,dy,dz); dx/=dl; dy/=dl; dz/=dl;
+  const ox=cam.pos[0], oy=cam.pos[1], oz=cam.pos[2];
+  if (pointCount && $('snapCloud').checked) {
+    let best=-1, bestD=pickThreshold*pickThreshold;
+    for (let i = 0; i < pointCount; i++) {
+      const wx=positions[i*3]-ox, wy=positions[i*3+1]-oy, wz=positions[i*3+2]-oz;
+      const t = wx*dx+wy*dy+wz*dz;
+      if (t < 0) continue;
+      const d = wx*wx+wy*wy+wz*wz - t*t;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best >= 0) return [positions[best*3], positions[best*3+1], positions[best*3+2]];
+  }
+  const dist = Math.max(2, markerScale * 40);
+  return [ox+dx*dist, oy+dy*dist, oz+dz*dist];
+}
+
+// --- waypoint management ---------------------------------------------------
+function pushWaypoint(pos) {
+  if (!pos) return;
+  waypoints.push({ pos });
+  selected = waypoints.length - 1;
+  refreshList();
+}
+function removeWaypoint(i) {
+  if (i < 0 || i >= waypoints.length) return;
+  waypoints.splice(i, 1);
+  if (selected >= waypoints.length) selected = waypoints.length - 1;
+  refreshList();
+}
+function clearAll() { waypoints.length = 0; selected = -1; refreshList(); }
+function select(i) {
+  selected = i;
+  $('stSel').textContent = i >= 0
+    ? 'sel #'+(i+1)+': '+waypoints[i].pos.map(v=>v.toFixed(2)).join(', ') : 'sel: none';
+  document.querySelectorAll('.wpItem').forEach((el, idx) => el.classList.toggle('sel', idx === i));
+}
+function focusWaypoint(i) {
+  if (i < 0 || i >= waypoints.length) return;
+  const p = waypoints[i].pos;
+  cam.pos = [p[0] - markerScale*12, p[1], p[2] + markerScale*6];
+  const dir = [p[0]-cam.pos[0], p[1]-cam.pos[1], p[2]-cam.pos[2]];
+  cam.yaw = Math.atan2(dir[1], dir[0]); cam.pitch = Math.atan2(dir[2], Math.hypot(dir[0], dir[1]));
+  select(i);
+}
+function refreshList() {
+  $('wpCount').textContent = '(' + waypoints.length + ')';
+  const box = $('wpList');
+  if (!waypoints.length) { box.innerHTML = '<div class="empty">No waypoints yet — left&#8209;click the cloud to mark one.</div>'; select(-1); return; }
+  box.innerHTML = '';
+  waypoints.forEach((w, i) => {
+    const row = document.createElement('div');
+    row.className = 'wpItem' + (i === selected ? ' sel' : '');
+    row.innerHTML = '<span class="wpIdx">'+(i+1)+'</span>' +
+      ['x','y','z'].map((ax,k)=>'<input class="num" data-i="'+i+'" data-k="'+k+'" value="'+fmt(w.pos[k])+'">').join('') +
+      '<button class="wpAct" data-focus="'+i+'" title="Fly to">⌖</button>' +
+      '<button class="wpAct" data-del="'+i+'" title="Delete">🗑</button>';
+    box.appendChild(row);
+  });
+  box.querySelectorAll('input.num').forEach(inp => inp.addEventListener('change', () => {
+    const i = +inp.dataset.i, k = +inp.dataset.k, v = parseFloat(inp.value);
+    if (isFinite(v)) { waypoints[i].pos[k] = v; if (i === selected) select(i); } else inp.value = fmt(waypoints[i].pos[k]);
+  }));
+  box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => removeWaypoint(+b.dataset.del));
+  box.querySelectorAll('[data-focus]').forEach(b => b.onclick = () => focusWaypoint(+b.dataset.focus));
+  box.querySelectorAll('.wpItem').forEach((el, i) => el.addEventListener('mousedown', e => {
+    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON') select(i);
+  }));
+}
+
+// --- export ----------------------------------------------------------------
+function fmt(v) {
+  let s = Number(v).toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+  if (s === '' || s === '-' || s === '-0') s = '0';
+  if (!/[.eE]/.test(s)) s += '.0';   // always emit a float: rcl rejects an int mixed into the fsm.waypoints sequence
+  return s;
+}
+function bodyZOffset() { return $('bodyOffset').checked ? (parseFloat($('bodyOffsetVal').value) || 0) : 0; }
+function buildYaml() {
+  const off = bodyZOffset(), vals = [];
+  waypoints.forEach(w => vals.push(fmt(w.pos[0]), fmt(w.pos[1]), fmt(w.pos[2] + off)));
+  return 'scan_planner_node:\n  ros__parameters:\n    fsm.waypoints: [' + vals.join(', ') + ']\n';
+}
+function buildCsv() {
+  const off = bodyZOffset(), lines = ['index,x,y,z'];
+  waypoints.forEach((w, i) => lines.push((i+1)+','+fmt(w.pos[0])+','+fmt(w.pos[1])+','+fmt(w.pos[2] + off)));
+  return lines.join('\n') + '\n';
+}
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+// Server-side save: POST to serve_nocache.py, which writes into the repo. Avoids the
+// browser Blob download (a.click()), which hangs on a native save dialog in embedded previews.
+async function saveToRepo() {
+  const rel = ($('savePath').value || '').trim().replace(/^\/+/, '');
+  if (!rel) { toast('Enter a repo-relative path to save', 3000); return; }
+  if (!waypoints.length) { toast('No waypoints to save', 2500); return; }
+  const content = /\.csv$/i.test(rel) ? buildCsv() : buildYaml();
+  const btn = $('saveRepo'), old = btn.textContent;
+  btn.textContent = '…'; btn.disabled = true;
+  try {
+    const r = await fetch('/__save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: rel, content }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) toast('Saved ' + waypoints.length + ' waypoints → ' + j.path + (bodyZOffset() ? '  (Z +' + fmt(bodyZOffset()) + ' m)' : '  (raw Z)'), 5000);
+    else toast('Save failed: ' + (j.error || ('HTTP ' + r.status)), 6000);
+  } catch (e) {
+    toast('Save failed: ' + e.message + ' — is serve_nocache.py running?', 6000);
+  } finally { btn.textContent = old; btn.disabled = false; }
+}
+
+// --- file loading ----------------------------------------------------------
+function toast(msg, ms) { const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms || 3000); }
+function loadBuffer(buf, name) {
+  toast('Parsing ' + (name || 'PCD') + ' …', 60000);
+  // let the toast paint before the (synchronous) parse blocks the thread
+  requestAnimationFrame(() => setTimeout(() => {
+    try {
+      const data = parsePCD(buf);
+      if (!data.count) throw new Error('no points found');
+      setCloud(data);
+      $('toast').style.display = 'none';
+    } catch (e) { toast('Failed to parse PCD: ' + e.message, 6000); }
+  }, 30));
+}
+function handleFile(file) {
+  if (!file) return;
+  const r = new FileReader();
+  r.onerror = () => toast('Failed to read file', 5000);
+  if (isWaypointFile(file.name)) { r.onload = () => applyWaypoints(parseWaypoints(r.result, file.name)); r.readAsText(file); }
+  else { r.onload = () => loadBuffer(r.result, file.name); r.readAsArrayBuffer(file); }
+}
+
+// --- waypoint file parsing (.yaml fsm.waypoints flat array, or .csv index,x,y,z) --
+function isWaypointFile(name){ return /\.(yaml|yml|csv)$/i.test(name || ''); }
+function parseWaypoints(text, name){
+  const nums = [];
+  if (/\.csv$/i.test(name || '')) {
+    (text || '').split(/\r?\n/).forEach(line => {
+      const parts = line.split(',').map(s => s.trim()).filter(s => s !== '');
+      if (parts.length < 3) return;
+      const tail = parts.slice(-3).map(Number); // drop a leading index / header column
+      if (tail.every(v => isFinite(v))) nums.push(tail[0], tail[1], tail[2]);
+    });
+  } else {
+    const m = (text || '').match(/fsm\.waypoints\s*:\s*\[([^\]]*)\]/i)
+           || (text || '').match(/waypoints[^\[]*\[([^\]]*)\]/i);
+    if (m) (m[1].match(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g) || []).forEach(s => {
+      const v = parseFloat(s); if (isFinite(v)) nums.push(v);
+    });
+  }
+  const pts = [];
+  for (let i = 0; i + 2 < nums.length; i += 3) pts.push([nums[i], nums[i+1], nums[i+2]]);
+  return pts;
+}
+function applyWaypoints(pts){
+  $('toast').style.display = 'none';
+  if (!pts || !pts.length){ toast('No waypoints found in that file', 5000); return; }
+  waypoints.length = 0;
+  pts.forEach(p => waypoints.push({ pos: [p[0], p[1], p[2]] }));
+  selected = waypoints.length - 1;
+  refreshList();
+  toast('Loaded ' + waypoints.length + ' waypoints', 3500);
+}
+
+// --- events ----------------------------------------------------------------
+function loadFromUrl(p) {
+  p = (p || '').trim();
+  if (!p) return;
+  if (isWaypointFile(p)) {
+    toast('Loading waypoints ' + p + ' …', 60000);
+    fetch(p).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(t => applyWaypoints(parseWaypoints(t, p)))
+      .catch(e => toast('Failed to load ' + p + ': ' + e.message, 6000));
+    return;
+  }
+  toast('Loading ' + p + ' …', 60000);
+  fetch(p).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+    .then(b => loadBuffer(b, p))
+    .catch(e => toast('Failed to load ' + p + ': ' + e.message, 6000));
+}
+
+// --- in-page server file browser (works even when native dialogs are blocked) --
+let browsePath = '/';
+let browseFilter = 'all';
+function openBrowser(filter){
+  browseFilter = filter || 'all';
+  $('fbTitle').textContent = browseFilter === 'wp' ? 'Load waypoints (.yaml / .csv)' : 'Browse files (.pcd / .yaml / .csv)';
+  $('fbHint').innerHTML = browseFilter === 'wp'
+    ? 'Click a folder to open it, or a <b>.yaml</b>/<b>.csv</b> file to load its waypoints (this replaces the current list). Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).'
+    : 'Click a folder to open it, or a file to load it: <b>.pcd</b> → point cloud, <b>.yaml</b>/<b>.csv</b> → waypoints. Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).';
+  $('fileBrowser').style.display = 'flex';
+  loadDir(browsePath || '/');
+}
+function closeBrowser(){ $('fileBrowser').style.display = 'none'; }
+function fbUp(){
+  if (browsePath === '/') return;
+  const p = browsePath.replace(/\/+$/, '');
+  const i = p.lastIndexOf('/');
+  loadDir((i > 0 ? p.substring(0, i) : '') + '/');
+}
+function loadDir(path){
+  browsePath = path.startsWith('/') ? path : '/' + path;
+  $('fbPath').textContent = browsePath;
+  $('fbList').innerHTML = '<div class="empty">Loading…</div>';
+  fetch(browsePath, { headers: { 'Accept': 'text/html' } })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(renderDir)
+    .catch(e => { $('fbList').innerHTML = '<div class="empty">Cannot list this directory: ' + e.message +
+      '<br><span style="font-size:11px;">The file browser needs the local http server (open the page via http://127.0.0.1:8765/…).</span></div>'; });
+}
+function renderDir(html){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const base = location.origin + (browsePath.endsWith('/') ? browsePath : browsePath + '/');
+  const folders = [], pcds = [], wps = [];
+  doc.querySelectorAll('a[href]').forEach(a => {
+    const raw = a.getAttribute('href');
+    if (!raw || raw.startsWith('?') || raw.startsWith('#') || raw === '../') return;
+    let abs; try { abs = new URL(raw, base); } catch(e){ return; }
+    if (abs.origin !== location.origin) return;
+    const childPath = abs.pathname;
+    if (childPath === browsePath) return;
+    let name; try { name = decodeURIComponent(childPath.replace(/\/$/, '').split('/').pop()); } catch(e){ name = raw; }
+    if (!name) return;
+    const isPcd = /\.pcd$/i.test(name), isWp = /\.(yaml|yml|csv)$/i.test(name);
+    if (raw.endsWith('/')) folders.push({ name, path: childPath });
+    else if (isPcd && browseFilter !== 'wp') pcds.push({ name, path: childPath });
+    else if (isWp && browseFilter !== 'pcd') wps.push({ name, path: childPath });
+  });
+  const byName = (a,b) => a.name.localeCompare(b.name);
+  folders.sort(byName); pcds.sort(byName); wps.sort(byName);
+  const box = $('fbList'); box.innerHTML = '';
+  if (!folders.length && !pcds.length && !wps.length){ box.innerHTML = '<div class="empty">Nothing loadable here</div>'; return; }
+  const mk = (ico, name, cls, onClick) => {
+    const row = document.createElement('div');
+    row.className = 'fbRow' + (cls ? ' ' + cls : '');
+    const s1 = document.createElement('span'); s1.className = 'ico'; s1.textContent = ico;
+    const s2 = document.createElement('span'); s2.className = 'nm'; s2.textContent = name;
+    row.appendChild(s1); row.appendChild(s2); row.onclick = onClick;
+    box.appendChild(row);
+  };
+  const pick = f => { closeBrowser(); loadFromUrl(f.path); };
+  folders.forEach(f => mk('📁', f.name, '', () => loadDir(f.path)));
+  pcds.forEach(f => mk('☁️', f.name, 'pcd', () => pick(f)));
+  wps.forEach(f => mk('📍', f.name, 'pcd', () => pick(f)));
+}
+function bind() {
+  addEventListener('resize', resize);
+  $('loadUrl').onclick = () => loadFromUrl($('pcdUrl').value);
+  $('pcdUrl').addEventListener('keydown', e => { if (e.key === 'Enter') loadFromUrl($('pcdUrl').value); });
+  $('browseBtn').onclick = () => openBrowser('all');
+  $('loadWpBtn').onclick = () => openBrowser('wp');
+  $('fbClose').onclick = closeBrowser;
+  $('fbUp').onclick = fbUp;
+  $('fileBrowser').addEventListener('click', e => { if (e.target.id === 'fileBrowser') closeBrowser(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && $('fileBrowser').style.display === 'flex') closeBrowser(); });
+  $('addCenter').onclick = () => pushWaypoint(pickAt(innerWidth/2, innerHeight/2));
+  $('undoBtn').onclick = () => removeWaypoint(waypoints.length - 1);
+  let clearArmed = false, clearTimer = null;
+  const disarmClear = () => { clearTimeout(clearTimer); clearArmed = false; const b = $('clearBtn'); b.textContent = '✕ Clear'; b.title = 'Remove all'; };
+  $('clearBtn').onclick = () => {
+    if (!waypoints.length) { toast('No waypoints to remove', 1800); return; }
+    const b = $('clearBtn');
+    if (!clearArmed) {                       // non-blocking confirm: arm on 1st click (never a native dialog)
+      clearArmed = true; b.textContent = '✕ Sure?'; b.title = 'Click again to remove all';
+      toast('Click "✕ Sure?" again to remove all ' + waypoints.length + ' waypoints', 3000);
+      clearTimer = setTimeout(disarmClear, 3000);
+      return;
+    }
+    const n = waypoints.length; disarmClear(); clearAll(); toast('Removed ' + n + ' waypoints', 2200);
+  };
+  $('exportYaml').onclick = () => { download('keypoints.yaml', buildYaml(), 'text/yaml'); toast('Exported ' + waypoints.length + ' waypoints' + (bodyZOffset() ? ' · Z +' + fmt(bodyZOffset()) + ' m body height' : ' · raw Z'), 3500); };
+  $('exportCsv').onclick = () => { download('waypoints.csv', buildCsv(), 'text/csv'); toast('Exported ' + waypoints.length + ' waypoints' + (bodyZOffset() ? ' · Z +' + fmt(bodyZOffset()) + ' m body height' : ' · raw Z'), 3500); };
+  $('saveRepo').onclick = saveToRepo;
+  $('savePath').addEventListener('keydown', e => { if (e.key === 'Enter') saveToRepo(); });
+  $('pointSize').addEventListener('input', e => pointSize = parseFloat(e.target.value));
+  $('pickThresh').addEventListener('input', e => pickThreshold = parseFloat(e.target.value));
+  $('speed').addEventListener('input', e => { moveSpeed = parseFloat(e.target.value); $('speedVal').textContent = moveSpeed.toFixed(1); });
+  $('heightColor').addEventListener('change', () => { if (pointCount) { buildColors();
+    gl.bindBuffer(gl.ARRAY_BUFFER, colBuf); gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW); } });
+  ['rotX','rotY','rotZ'].forEach(id => $(id).addEventListener('change', onRotChange));
+  $('rotReset').onclick  = () => { $('rotX').value=0;  $('rotY').value=0; $('rotZ').value=0; onRotChange(); };
+  $('rotZup').onclick    = () => { $('rotX').value=90; $('rotY').value=0; $('rotZ').value=0; onRotChange(); };
+  $('rotReframe').onclick= () => { if (pointCount) frameCloud(); };
+
+  addEventListener('keydown', e => {
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    keys[e.code] = true;
+    if (e.code === 'KeyP') pushWaypoint(pickAt(innerWidth/2, innerHeight/2));
+    if (e.code === 'KeyZ') removeWaypoint(waypoints.length - 1);
+    if (e.code === 'KeyL') focusWaypoint(selected >= 0 ? selected : waypoints.length - 1);
+    if (e.code === 'Space') e.preventDefault();
+  });
+  addEventListener('keyup', e => keys[e.code] = false);
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+  glCanvas.addEventListener('contextmenu', e => e.preventDefault());
+  glCanvas.addEventListener('mousedown', e => {
+    if (e.button === 2) { dragging = true; lastMouse = { x: e.clientX, y: e.clientY }; }
+    if (e.button === 0) leftDown = { x: e.clientX, y: e.clientY };
+  });
+  addEventListener('mouseup', e => {
+    if (e.button === 2) dragging = false;
+    if (e.button === 0 && leftDown) {
+      const moved = Math.hypot(e.clientX-leftDown.x, e.clientY-leftDown.y);
+      leftDown = null;
+      if (moved <= 4 && pointCount) pushWaypoint(pickAt(e.clientX, e.clientY));
+    }
+  });
+  addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.clientX-lastMouse.x, dy = e.clientY-lastMouse.y;
+    lastMouse = { x: e.clientX, y: e.clientY };
+    cam.yaw -= dx * 0.0028;
+    // No pitch clamp: dragging past straight down/up keeps rotating (full 360deg).
+    cam.pitch -= dy * 0.0028;
+  });
+  glCanvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    // Wheel = zoom: dolly the camera along its view direction.
+    // Scroll up zooms in (moves forward), scroll down zooms out (moves back).
+    const f = forwardVec();
+    const dir = e.deltaY > 0 ? -1 : 1;
+    const step = dir * Math.max(0.05, moveSpeed * 0.5);
+    cam.pos[0] += f[0]*step; cam.pos[1] += f[1]*step; cam.pos[2] += f[2]*step;
+  }, { passive: false });
+
+  const hint = $('dropHint');
+  ['dragenter','dragover'].forEach(ev => addEventListener(ev, e => { e.preventDefault(); hint.style.display = 'flex'; }));
+  addEventListener('dragleave', e => { if (e.target === document.documentElement) hint.style.display = 'none'; });
+  addEventListener('drop', e => { e.preventDefault(); hint.style.display = 'none';
+    const f = e.dataTransfer.files[0]; if (f) handleFile(f); });
+}
+
+// --- boot ------------------------------------------------------------------
+if (gl) { resize(); initGL(); bind(); requestAnimationFrame(tick);
+  const q = new URLSearchParams(location.search).get('pcd');
+  if (q) fetch(q).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then(b => loadBuffer(b, q)).catch(e => toast('Failed to fetch ' + q + ': ' + e.message, 6000));
+} else { bind(); }
+</script>
+</body>
+</html>
