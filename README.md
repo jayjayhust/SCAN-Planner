@@ -68,6 +68,13 @@ ros2 launch scan_planner run.launch.py \
   controller_mode:=open_loop use_gpu:=false \
   use_pcd_map:=true pcd_map_file:=/home/jay/workspace/robotics/unitree/SCAN-Planner/src/simulator/map_generator/maps/goslam_xiaohao_hq_indoor_multi_0.1m.pcd \
   keypoints_file:=/home/jay/workspace/robotics/unitree/SCAN-Planner/src/simulator/map_generator/configs/go2-xiaohao-keypoints.yaml
+
+# 使用自定义点云地图(多层地图-楼梯点云做了修正处理，按照 ROS 2 参数文件中预设的 `fsm.waypoints` 路径点序列导航)
+ros2 launch scan_planner run.launch.py \
+  is_real_world:=false navi_mode:=2 sensor_type:=lidar \
+  controller_mode:=open_loop use_gpu:=false \
+  use_pcd_map:=true pcd_map_file:=/home/jay/workspace/robotics/unitree/SCAN-Planner/src/simulator/map_generator/maps/goslam_xiaohao_hq_indoor_multi_0.1m_carved.pcd \
+  keypoints_file:=/home/jay/workspace/robotics/unitree/SCAN-Planner/src/simulator/map_generator/configs/go2-xiaohao-keypoints.yaml
 ```
 
 在另一个终端启动 RViz2：
@@ -123,10 +130,11 @@ ros2 run scan_planner keypoint_recorder.py --output keypoints.yaml
 
 ## GoSLAM 实拍地图仿真
 
-本分支内置两张 GoSLAM 实拍的室内点云地图，位于 `src/simulator/map_generator/maps/`，随 `map_generator` 包一起安装（`colcon build` 后可通过 `get_package_share_directory("map_generator")` 解析路径），无需手动指定绝对路径：
+本分支内置三张 GoSLAM 实拍的室内点云地图，位于 `src/simulator/map_generator/maps/`，随 `map_generator` 包一起安装（`colcon build` 后可通过 `get_package_share_directory("map_generator")` 解析路径），无需手动指定绝对路径：
 
 - `goslam_xiaohao_hq_indoor_single_0.1m.pcd`：单层室内地图
-- `goslam_xiaohao_hq_indoor_multi_0.1m.pcd`：多层室内地图
+- `goslam_xiaohao_hq_indoor_multi_0.1m.pcd`：多层室内地图（原始重建，楼梯井偏窄）
+- `goslam_xiaohao_hq_indoor_multi_0.1m_carved.pcd`：多层室内地图（楼梯井修复版，`run_goslam_multi.launch.py` 默认加载；详见下文「多层楼梯点云修复」）
 
 两个预设启动文件封装了 `run.launch.py`，已按实拍地图重新计算出生点（entry floor 约 `-4.4, -2.5, 0.25`）：
 
@@ -136,7 +144,8 @@ source install/setup.bash
 # 单层：闭环四足运动学仿真 + RViz2 2D Nav Goal（navi_mode:=1），开箱即用
 ros2 launch scan_planner run_goslam_single.launch.py
 
-# 多层：开环里程计回放（四足运动学仿真爬不了楼梯，必须用 open_loop）
+# 多层：开环里程计回放，默认加载 carved 修复地图并按 go2-xiaohao-keypoints.yaml 自动巡层（navi_mode:=2）
+# 四足运动学仿真爬不了楼梯，必须用 open_loop；如需 RViz 2D Nav Goal 手动打点，加 navi_mode:=1
 ros2 launch scan_planner run_goslam_multi.launch.py
 ```
 
@@ -197,6 +206,38 @@ ros2 launch scan_planner run.launch.py \
 - **每段楼层切换至少三个点**：楼梯底、楼梯顶、目标点，缺一不可。全局参考是过点的 min-snap，A\* 前端只在 XY 扩展、z 沿直线线性插值，唯有短分段才能贴合真实楼梯几何。
 - **坐标系一致**：路径点存于录制时的里程计 `world` 原点，回放导航时的定位必须与录制时同一世界原点（例如针对同一先验地图重定位），否则点位会整体偏移。
 - **免重新构建**：本仓库以 `--symlink-install` 构建，`keypoints.multi.yaml` 为软链，录制写入 install 路径即写回源文件，回放前无需再 `colcon build`。
+
+### 多层楼梯点云修复（`..._carved.pcd`）
+
+`goslam_xiaohao_hq_indoor_multi_0.1m.pcd` 的楼梯井在 GoSLAM 重建时被压窄：按 SCAN-Planner 的机体膨胀判据（`double_cylinder_radius` 0.25、`obstacles_inflation_z_up` 0.1、`z_down` 0.4），W22–W24 处空闲走廊仅 0.22–0.40 m、W33–W35 完全堵塞，而 0.31 m 的 Go2 机身至少需要 0.50 m 空闲。半径离群点滤波无效（仅删 0–58 点）——这是真实连通几何，不是噪声。
+
+`tools/carve_stairwell.py` 在仿真中修复该地图：沿 W22→W36 下行中心线删除一条管道内的点（横向半径 `R_LAT` 0.55，z 覆盖 `[中心线z-0.22, 中心线z+0.48]`，完整包住膨胀带以保证机体空闲）。共删除 1035 点（约占全图 0.25%），写出 420364 点的非破坏性副本 `..._carved.pcd`（`map_pub` 降采样后加载 419179 点）。修复后走廊宽度（用同一精确膨胀判据、真实半径量得）：W22 1.32 m、W23 1.46 m、W24 1.52 m、W33 0.66 m、W34 0.58 m、W35 0.92 m，均 ≥ 0.50 m。
+
+```bash
+python3 tools/carve_stairwell.py          # 试跑：只打印修复前后空闲走廊报告，不写文件
+python3 tools/carve_stairwell.py --write  # 生成修复地图 ..._carved.pcd
+```
+
+**完整巡层依赖三项修复，缺一不可**（carve 只是第 1 项，另两项已固化进 `configs/go2-xiaohao-keypoints.yaml`）：
+
+1. **地图 carve**（本工具）——把楼梯井走廊拓到 ~1.1 m，让真实 0.50 m 机身可通过。
+2. **楼梯路径点 Z 抬到 tread+0.35**（W21–W42，仅抬升；W22–W24 同时在 X 上居中）——保证每个目标点**及相邻踏面间的 min-snap 斜坡**都避开膨胀带 `[tread-0.4, tread+0.1]`；一层 W1–W20 保持原值（抬升会破坏夹层下穿）。
+3. **末段速度 `max_vel` 0.75→0.4**——最后 W41→W42 间距（~1.06 m）小于 `max_vel²/max_acc = 1.125 m`，默认速度下短 min-snap 剖面会触发加速度上限（`max_acc` 0.5 + `acc_tolerance` 1.0 = 1.5）。该覆盖写在 keypoints 文件里（在 `planner.yaml` 之后加载），提交版 `planner.yaml` 因此保持上游默认。
+
+三项均已固化，`--symlink-install` 下改完即生效、无需重新构建。一键复现完整 42 点巡层（一层 → 下楼 → 二层，终点 W42 `-14.94, -7.40, -3.72` 静止）：
+
+```bash
+ros2 launch scan_planner run_goslam_multi.launch.py navi_mode:=2
+```
+
+**注意事项**：
+
+- **carve 仅用于仿真**：真机楼梯井确实太窄（0.22–0.40 m < 0.50 m），实机对应处理是**重新 SLAM 楼梯井**而非删点；切勿把 carved 地图当真值用于实机部署。
+- **务必确认加载的是 carved 地图**：`map_pub` 启动行应为 `Loaded 419179 PCD points from ..._carved.pcd`。若加载的是原始 `.pcd`（无 `_carved`），会在 W24（目标 `-13.3, -10.9, -0.35`）复现 `A-star failed` 卡死——这正是「用了错地图」的特征。
+- **三项是一个整体**：只 carve 不抬 Z / 不调速仍会卡（`First three control points are in obstacles` 或末段 `Dynamic feasibility failed`）；只抬 Z / 调速不 carve 则窄走廊无法布线。
+- **非破坏性**：源 PCD 永不修改，carve 只产出独立副本；重新 SLAM 后需对新点云重跑 `--write`，并按新踏面重新量取 tread+0.35。
+- **到达 W42 后偶发的 `Replan failed 1000` 属良性空转**（FSM 在终点做零长度重规划），非导航失败——以机器人位姿是否已等于最后路径点来判断。
+- **启动前确认只有一套节点**（`scan_planner_node`/`map_pub`/`pcl_render_node`/`open_loop_controller` 各 1 个）：并发 launch 会污染 `/quad_0/*` 共享话题，得到不可信结果。
 
 ### 坐标系对应与点云地图初始位置（关键）
 
