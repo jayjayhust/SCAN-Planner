@@ -18,7 +18,16 @@ def _setup(context):
     scan_share = get_package_share_directory("scan_planner")
     go2_share = get_package_share_directory("go2_description")
     planner_yaml = os.path.join(scan_share, "config", "planner.yaml")
-    controllers_yaml = os.path.join(scan_share, "config", "controllers.yaml")
+    controllers_override = LaunchConfiguration("controllers_file").perform(context)
+    controllers_yaml = (
+        controllers_override
+        if controllers_override
+        else os.path.join(scan_share, "config", "controllers.yaml")
+    )
+    if not os.path.isfile(controllers_yaml):
+        raise RuntimeError(
+            f"controllers_file does not exist: {controllers_yaml}"
+        )
     is_real = _as_bool(LaunchConfiguration("is_real_world").perform(context))
     use_sim_time = _as_bool(LaunchConfiguration("use_sim_time").perform(context))
     sensor_type = LaunchConfiguration("sensor_type").perform(context)
@@ -197,6 +206,7 @@ def generate_launch_description():
             DeclareLaunchArgument("sensor_type", default_value="lidar"),
             DeclareLaunchArgument("controller_mode", default_value="closed_loop"),
             DeclareLaunchArgument("keypoints_file", default_value=""),
+            DeclareLaunchArgument("controllers_file", default_value=""),
             DeclareLaunchArgument("use_gpu", default_value="false"),
             DeclareLaunchArgument("use_pcd_map", default_value="false"),
             DeclareLaunchArgument("pcd_map_file", default_value=""),

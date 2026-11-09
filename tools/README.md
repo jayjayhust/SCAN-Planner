@@ -10,6 +10,85 @@ The generated file is a ROS 2 parameter file containing the flat
 `fsm.waypoints: [x0, y0, z0, ...]` array. Pass it to `run.launch.py` with
 `keypoints_file:=/absolute/path/to/keypoints.yaml` when `navi_mode:=2`.
 
+# Synthetic two-floor map + tour (basic-logic smoke test)
+
+`gen_multi_floor_pcd.py` procedurally builds a **clean, noise-free** two-floor
+scene — two floor slabs joined by a single straight staircase, plus outer walls —
+and a matching `fsm.waypoints` tour. It exists to exercise SCAN-Planner's basic
+floor-to-floor logic (2.5D A\* + B-spline + `PRESET_TARGET` FSM) deterministically,
+without the difficulty and noise of the real GoSLAM indoor scan.
+
+It writes two files (both already wired into the dedicated preset below):
+
+- `src/simulator/map_generator/maps/synthetic_two_floor_0.05m.pcd` — binary PCD,
+  ~517k points. Floor-1 top at `z=0` (== `grid_map.ground_height`), floor-2 top at
+  `z=2.5`, staircase `x in [-2, 2]` ascending `+Y` with 20 risers (rise 0.125,
+  run 0.35, ~19.6 deg slope).
+- `src/simulator/map_generator/configs/keypoints.synthetic.yaml` — a 9-point tour:
+  floor 1 -> a stair stop every 4 treads -> floor 2 west end (goal).
+
+## Generate
+
+```bash
+python3 tools/gen_multi_floor_pcd.py     # rewrites both files in place
+```
+
+The PCD and YAML are single-sourced from the geometry constants at the top of the
+script (`FLOOR*_Z`, `N_RISERS`, `RISE`/`RUN`, `BODY_OFFSET`, `WP_TREAD_STEP`), so
+edit those and re-run to reshape the scene. With `--symlink-install` the regenerated
+files are picked up in place — **no rebuild needed**.
+
+## Run
+
+```bash
+# headless replay of the generated tour (default navi_mode:=2)
+ros2 launch scan_planner run_synthetic_multi.launch.py
+
+# or drive it manually with RViz "2D Nav Goal"
+ros2 launch scan_planner run_synthetic_multi.launch.py navi_mode:=1
+```
+
+`run_synthetic_multi.launch.py` wraps `run.launch.py` with
+`controller_mode:=open_loop` (the quadruped kinematic sim cannot climb stairs;
+`open_loop_controller` republishes the planned trajectory as odometry so floor
+changes work), `use_pcd_map:=true`, and its own `config/controllers.synthetic.yaml`
+spawn (floor-1 entry `(0, -4.8, 0.55)` facing `+Y`) via the `controllers_file`
+override — so the xiaohao preset's `controllers.yaml` stays untouched. A passing run
+plans all 9 waypoints and ends on the FSM transition `EXEC_TRAJ -> WAIT_TARGET` with
+**0** emergency stops.
+
+## Tuning knobs (why the numbers are what they are)
+
+- **`BODY_OFFSET = 0.55`** — waypoint Z = surface Z + this. `navi_mode:=2` consumes
+  waypoint Z verbatim, so it must lift the whole **double-cylinder** body footprint
+  (two 0.25 m-radius cylinders at `pos +/- 0.18 m` along the heading) clear of the
+  inflated occupied band `[surface - z_down(0.4), surface + z_up(0.1)]`. The binding
+  case is the *front* cylinder reaching the next riser up, giving a static minimum of
+  `RISE + z_up = 0.125 + 0.10 ~= 0.23 m`. The runtime sensor-rendered map inflates a
+  little *higher* than the ideal surfaces (raycast discretization + probabilistic hit
+  accumulation on tread edges), so 0.35 — fine on paper — still got engulfed on the
+  climb; 0.55 keeps a ~0.32 m margin. It is **driven by `RISE`, not `RUN`** —
+  widening the treads does not relax it.
+- **Waypoint spacing >= ~1.2 m** — SCAN-Planner sizes the global min-snap duration by
+  a heuristic that yields a short, high-accel profile for hops below
+  `max_vel^2/max_acc = 1.125 m`, which then fails the dynamic-feasibility check. Every
+  4 treads (`WP_TREAD_STEP`) keeps stops ~1.4 m apart while the near-linear ramp
+  between them still clears each intermediate tread band.
+
+## Caveat: run a single isolated launch
+
+Concurrent launches on the same `ROS_DOMAIN_ID` collide on the shared topics this
+stack uses (`/quad_0/body_pose`, `/map_generator/global_cloud`,
+`/grid_map/occupancy_inflate`) and silently contaminate each other. The symptom is the
+robot stalling mid-climb with "terminal point is in an obstacle" while a probe of those
+topics shows *another* map's coordinates. Orphaned launches get reparented to
+`systemd --user` and persist across sessions, so before trusting a run:
+
+```bash
+pgrep -af 'scan_planner|map_pub|open_loop|pcl_render'   # expect exactly one of each
+ROS_DOMAIN_ID=7 ros2 launch scan_planner run_synthetic_multi.launch.py   # isolate
+```
+
 # Waypoint Studio (browser point-cloud viewer)
 
 `waypoint_studio.html` is a self-contained, browser-based tool for loading a

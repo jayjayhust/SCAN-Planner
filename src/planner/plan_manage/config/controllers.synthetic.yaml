@@ -1,0 +1,59 @@
+# Controller params for the synthetic two-floor preset (run_synthetic_multi.launch.py).
+# Identical to controllers.yaml except the open_loop_controller spawn, which is set
+# to the synthetic map's floor-1 entry (world frame, Z up). open_loop_controller
+# reads init pose from here (run.launch.py init_x/y/z args are NOT forwarded to it).
+
+closed_loop_controller:
+  ros__parameters:
+    use_sim_time: false
+    time_forward: 0.8
+    heading_error_threshold: 0.8
+    kp_pos: 0.8
+    kp_yaw: 1.5
+    max_vx: 0.75
+    max_vy: 0.35
+    max_vyaw: 1.0
+    finish_dist: 0.15
+
+open_loop_controller:
+  ros__parameters:
+    use_sim_time: false
+    frame_id: world
+    child_frame_id: base
+    publish_rate: 100.0
+    yaw_min_speed: 0.05
+    hold_final_position: true
+    # Spawn on floor 1, south of the staircase, facing +Y (toward the stairs).
+    # init_z = floor-1 surface + BODY_OFFSET (0.55) to match the waypoint body height.
+    init_x: 0.0
+    init_y: -4.8
+    init_z: 0.55
+    init_yaw: 1.5708
+
+go2_kinematic_sim:
+  ros__parameters:
+    use_sim_time: false
+    init_x: 0.0
+    init_y: -4.8
+    init_z: 0.55
+    init_yaw: 1.5708
+    max_vx: 0.75
+    max_vy: 0.35
+    max_vyaw: 1.0
+    cmd_timeout: 0.3
+    sim_rate: 100.0
+    publish_tf: true
+    frame_id: world
+    child_frame_id: base
+
+go2_gait_publisher:
+  ros__parameters:
+    use_sim_time: false
+    rate: 60.0
+    gait_frequency: 2.2
+    min_walk_speed: 0.05
+    max_walk_speed: 1.0
+    always_trot: false
+    hip_swing: 0.08
+    thigh_swing: 0.32
+    calf_swing: 0.42
