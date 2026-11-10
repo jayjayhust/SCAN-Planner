@@ -92,7 +92,7 @@
   <canvas id="overlay"></canvas>
 </div>
 <div id="crosshair"></div>
-<div id="dropHint">Drop a <b>.pcd</b> file to load</div>
+<div id="dropHint">Drop a <b>.pcd</b> or <b>.ply</b> file to load</div>
 <div id="toast"></div>
 
 <div id="fileBrowser">
@@ -113,10 +113,10 @@
 <div class="panel" id="leftPanel">
   <h1>SCAN&#8209;Planner <span>Waypoint Studio</span></h1>
   <div class="row">
-    <button id="browseBtn" class="btn primary grow" title="Load a .pcd cloud file">🗂 Browse files…</button>
+    <button id="browseBtn" class="btn primary grow" title="Load a .pcd or .ply cloud file">🗂 Browse files…</button>
   </div>
   <div class="row" style="margin-top:6px;">
-    <input class="txt" id="pcdUrl" placeholder="path/URL: /map.pcd or waypoints.yaml" spellcheck="false" />
+    <input class="txt" id="pcdUrl" placeholder="path/URL: /map.pcd, scene.ply, or waypoints.yaml" spellcheck="false" />
     <button id="loadUrl">Load</button>
   </div>
 
@@ -381,6 +381,178 @@ function parsePCD(buffer) {
     numPoints = idx;
   }
   return { pos, rgb, count: numPoints };
+}
+
+// --- PLY parsing (incl. 3D Gaussian Splat .ply: centers + SH DC band -> RGB) --
+// Returns the same { pos, rgb, count } shape as parsePCD, so setCloud()/buildColors()
+// need no change: baseRgb is populated from the splats' 0th-order spherical-harmonic
+// color (f_dc_*), shown when the "Height colormap" checkbox is unchecked.
+// The header/record decoders below are shared with loadPLYStream(), which parses
+// a .ply incrementally from a fetch/file stream — a 2.3 GiB full-res splat cannot
+// fit the single ArrayBuffer that the whole-file path needs.
+const PLY_SIZE = { char:1, uchar:1, uint8:1, int8:1, short:2, ushort:2, uint16:2, int16:2,
+                   int:4, uint:4, int32:4, uint32:4, float:4, float32:4, double:8, float64:8 };
+const PLY_SH_C0 = 0.28209479177387814;    // 1 / (2*sqrt(pi)); color = 0.5 + SH_C0 * f_dc
+function plyHeader(u8, dec) {
+  let offset = 0;
+  const readLine = () => {
+    const start = offset;
+    while (offset < u8.length && u8[offset] !== 10) offset++;
+    let s = dec.decode(u8.subarray(start, offset)); offset++;
+    if (s.endsWith('\r')) s = s.slice(0, -1);
+    return s;
+  };
+  const magic = readLine();
+  if (magic.trim() !== 'ply') throw new Error('not a PLY file (missing "ply" magic)');
+  let format = 'ascii', numPoints = 0, inVertex = false;
+  const props = [];                         // ordered vertex properties: {type, name, size, off}
+  while (offset < u8.length) {
+    const p = readLine().split(/\s+/).filter(Boolean);
+    const k = p[0];
+    if (k === 'format') format = p[1];
+    else if (k === 'element') {
+      if (p[1] === 'vertex') { inVertex = true; numPoints = parseInt(p[2], 10); }
+      else inVertex = false;                // only the vertex element is read
+    }
+    else if (k === 'property' && inVertex) {
+      if (p[1] === 'list') throw new Error('PLY vertex "property list" is not supported');
+      props.push({ type: p[1], name: p[2], size: PLY_SIZE[p[1]] || 4 });
+    }
+    else if (k === 'end_header') break;
+  }
+  if (!numPoints) throw new Error('PLY header declared 0 vertices');
+  if (format !== 'ascii' && format !== 'binary_little_endian' && format !== 'binary_big_endian')
+    throw new Error('unsupported PLY format: ' + format);
+  let stride = 0;
+  for (const pr of props) { pr.off = stride; stride += pr.size; }
+  const byName = {};
+  for (const pr of props) byName[pr.name] = pr;
+  const fx = byName['x'], fy = byName['y'], fz = byName['z'];
+  if (!fx || !fy || !fz) throw new Error('PLY vertex element has no x/y/z');
+  const dc = [byName['f_dc_0'], byName['f_dc_1'], byName['f_dc_2']];   // 3DGS SH DC band
+  const hasSH = !!(dc[0] && dc[1] && dc[2]);
+  const rgbProps = [byName['red'], byName['green'], byName['blue']];   // plain colored PLY
+  const hasRgb8 = !hasSH && !!(rgbProps[0] && rgbProps[1] && rgbProps[2]);
+  return { format, numPoints, props, stride, offset, le: format !== 'binary_big_endian',
+           fx, fy, fz, dc, hasSH, rgbProps, hasRgb8 };
+}
+function plyDecode(h, view, base0, i0, i1, pos, rgb) {  // records [i0,i1): addr = base0 + (p-i0)*stride
+  const le = h.le, stride = h.stride;
+  const fx = h.fx, fy = h.fy, fz = h.fz, dc = h.dc, rgbProps = h.rgbProps;
+  const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const readNum = (addr, pr) => {
+    switch (pr.type) {
+      case 'float': case 'float32': return view.getFloat32(addr, le);
+      case 'double': case 'float64': return view.getFloat64(addr, le);
+      case 'uchar': case 'uint8': return view.getUint8(addr);
+      case 'char': case 'int8': return view.getInt8(addr);
+      case 'ushort': case 'uint16': return view.getUint16(addr, le);
+      case 'short': case 'int16': return view.getInt16(addr, le);
+      case 'uint': case 'uint32': return view.getUint32(addr, le);
+      case 'int': case 'int32': return view.getInt32(addr, le);
+      default: return view.getFloat32(addr, le);
+    }
+  };
+  for (let p = i0; p < i1; p++) {
+    const b = base0 + (p - i0) * stride;
+    pos[p*3] = readNum(b + fx.off, fx); pos[p*3+1] = readNum(b + fy.off, fy); pos[p*3+2] = readNum(b + fz.off, fz);
+    if (h.hasSH) {
+      rgb[p*3]   = clamp01(0.5 + PLY_SH_C0 * readNum(b + dc[0].off, dc[0]));
+      rgb[p*3+1] = clamp01(0.5 + PLY_SH_C0 * readNum(b + dc[1].off, dc[1]));
+      rgb[p*3+2] = clamp01(0.5 + PLY_SH_C0 * readNum(b + dc[2].off, dc[2]));
+    } else if (h.hasRgb8) {
+      rgb[p*3] = readNum(b + rgbProps[0].off, rgbProps[0])/255;
+      rgb[p*3+1] = readNum(b + rgbProps[1].off, rgbProps[1])/255;
+      rgb[p*3+2] = readNum(b + rgbProps[2].off, rgbProps[2])/255;
+    }
+  }
+}
+function parsePLY(buffer) {
+  const h = plyHeader(new Uint8Array(buffer), new TextDecoder());
+  const pos = new Float32Array(h.numPoints * 3);
+  const rgb = (h.hasSH || h.hasRgb8) ? new Float32Array(h.numPoints * 3) : null;
+  if (h.format === 'ascii') {
+    const u8 = new Uint8Array(buffer), dec = new TextDecoder();
+    let offset = h.offset;
+    const names = h.props.map(pr => pr.name);
+    const xi = names.indexOf('x'), yi = names.indexOf('y'), zi = names.indexOf('z');
+    const dci = [names.indexOf('f_dc_0'), names.indexOf('f_dc_1'), names.indexOf('f_dc_2')];
+    const rgi = [names.indexOf('red'), names.indexOf('green'), names.indexOf('blue')];
+    const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+    const readLine = () => { const start = offset;
+      while (offset < u8.length && u8[offset] !== 10) offset++;
+      let s = dec.decode(u8.subarray(start, offset)); offset++;
+      if (s.endsWith('\r')) s = s.slice(0, -1); return s; };
+    let idx = 0;
+    while (offset < u8.length && idx < h.numPoints) {
+      const line = readLine(); if (!line.length) continue;
+      const t = line.split(/\s+/);
+      pos[idx*3] = parseFloat(t[xi]); pos[idx*3+1] = parseFloat(t[yi]); pos[idx*3+2] = parseFloat(t[zi]);
+      if (h.hasSH) {
+        rgb[idx*3]   = clamp01(0.5 + PLY_SH_C0 * parseFloat(t[dci[0]]));
+        rgb[idx*3+1] = clamp01(0.5 + PLY_SH_C0 * parseFloat(t[dci[1]]));
+        rgb[idx*3+2] = clamp01(0.5 + PLY_SH_C0 * parseFloat(t[dci[2]]));
+      } else if (h.hasRgb8) {
+        rgb[idx*3] = parseFloat(t[rgi[0]])/255; rgb[idx*3+1] = parseFloat(t[rgi[1]])/255; rgb[idx*3+2] = parseFloat(t[rgi[2]])/255;
+      }
+      idx++;
+    }
+    return { pos, rgb, count: idx };
+  }
+  plyDecode(h, new DataView(buffer), h.offset, 0, h.numPoints, pos, rgb);
+  return { pos, rgb, count: h.numPoints };
+}
+// Streaming load for .ply files too big for one ArrayBuffer (the 2.3 GiB full-res
+// xiaohao splat): parse the header from the first bytes, then decode fixed-stride
+// records chunk by chunk into preallocated arrays, with a progress toast. Ends in
+// the same setCloud() as every other load path.
+async function loadPLYStream(readable, label) {
+  const reader = readable.getReader();
+  const latin = new TextDecoder('iso-8859-1');   // 1 char == 1 byte, for the header search
+  const concat = (a, b) => { const o = new Uint8Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+  let pending = new Uint8Array(0), h = null;
+  while (!h) {
+    const r = await reader.read();
+    if (r.done) throw new Error('PLY header never terminated (missing end_header)');
+    pending = concat(pending, r.value);
+    // search BEFORE the size guard: one read() can legitimately deliver many MiB
+    // (localhost / big bodies), with end_header sitting in the first ~2 KiB
+    const s = latin.decode(pending);
+    const i = s.indexOf('end_header');
+    if (i >= 0) {
+      const nl = s.indexOf('\n', i);
+      if (nl >= 0) {
+        h = plyHeader(pending.subarray(0, nl + 1), new TextDecoder());
+        pending = pending.subarray(nl + 1);
+        break;
+      }
+    }
+    if (pending.length > (1 << 20)) throw new Error('PLY header larger than 1 MiB');
+  }
+  if (h.format === 'ascii') { reader.cancel(); throw new Error('streaming ascii PLY not supported'); }
+  const N = h.numPoints, S = h.stride;
+  const pos = new Float32Array(N * 3);
+  const rgb = (h.hasSH || h.hasRgb8) ? new Float32Array(N * 3) : null;
+  let idx = 0, buf = pending, lastPct = -1;
+  toast('Parsing ' + (label || 'PLY') + ' … 0%', 60000);
+  while (idx < N) {
+    while (buf.length < S) {
+      const r = await reader.read();
+      if (r.done) break;
+      buf = concat(buf, r.value);
+    }
+    if (buf.length < S) break;
+    const n = Math.min(N - idx, (buf.length / S) | 0);
+    plyDecode(h, new DataView(buf.buffer, buf.byteOffset, n * S), 0, idx, idx + n, pos, rgb);
+    idx += n;
+    buf = buf.subarray(n * S);
+    const pct = (100 * idx / N) | 0;
+    if (pct !== lastPct) { lastPct = pct; toast('Parsing ' + (label || 'PLY') + ' … ' + pct + '%', 60000); }
+  }
+  reader.cancel().catch(() => {});
+  if (idx !== N) throw new Error('PLY truncated: ' + idx + ' of ' + N + ' vertices');
+  setCloud({ pos, rgb, count: N });
+  $('toast').style.display = 'none';
 }
 
 // --- colormap --------------------------------------------------------------
@@ -794,15 +966,19 @@ function loadBuffer(buf, name) {
   // let the toast paint before the (synchronous) parse blocks the thread
   requestAnimationFrame(() => setTimeout(() => {
     try {
-      const data = parsePCD(buf);
+      const data = /\.ply(\?|#|$)/i.test(name) ? parsePLY(buf) : parsePCD(buf);   // tolerate ?query/#hash suffixes
       if (!data.count) throw new Error('no points found');
       setCloud(data);
       $('toast').style.display = 'none';
-    } catch (e) { toast('Failed to parse PCD: ' + e.message, 6000); }
+    } catch (e) { toast('Failed to parse map: ' + e.message, 6000); }
   }, 30));
 }
 function handleFile(file) {
   if (!file) return;
+  if (/\.ply$/i.test(file.name) && file.stream) {   // big splats must not go through one ArrayBuffer
+    loadPLYStream(file.stream(), file.name).catch(e => toast('Failed to parse map: ' + e.message, 6000));
+    return;
+  }
   const r = new FileReader();
   r.onerror = () => toast('Failed to read file', 5000);
   if (isWaypointFile(file.name)) { r.onload = () => applyWaypoints(parseWaypoints(r.result, file.name)); r.readAsText(file); }
@@ -853,20 +1029,23 @@ function loadFromUrl(p) {
     return;
   }
   toast('Loading ' + p + ' …', 60000);
-  fetch(p).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-    .then(b => loadBuffer(b, p))
-    .catch(e => toast('Failed to load ' + p + ': ' + e.message, 6000));
+  fetch(p).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (/\.ply(\?|#|$)/i.test(p) && r.body && r.body.getReader) return loadPLYStream(r.body, p);
+    return r.arrayBuffer().then(b => loadBuffer(b, p));
+  }).catch(e => toast('Failed to load ' + p + ': ' + e.message, 6000));
 }
 
 // --- in-page server file browser (works even when native dialogs are blocked) --
 let browsePath = '/';
 let browseFilter = 'all';
+let dirReqSeq = 0;   // listing request sequence; stale responses are dropped
 function openBrowser(filter){
   browseFilter = filter || 'all';
-  $('fbTitle').textContent = browseFilter === 'wp' ? 'Load waypoints (.yaml / .csv)' : 'Browse files (.pcd / .yaml / .csv)';
+  $('fbTitle').textContent = browseFilter === 'wp' ? 'Load waypoints (.yaml / .csv)' : 'Browse files (.pcd / .ply / .yaml / .csv)';
   $('fbHint').innerHTML = browseFilter === 'wp'
     ? 'Click a folder to open it, or a <b>.yaml</b>/<b>.csv</b> file to load its waypoints (this replaces the current list). Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).'
-    : 'Click a folder to open it, or a file to load it: <b>.pcd</b> → point cloud, <b>.yaml</b>/<b>.csv</b> → waypoints. Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).';
+    : 'Click a folder to open it, or a file to load it: <b>.pcd</b>/<b>.ply</b> → point cloud, <b>.yaml</b>/<b>.csv</b> → waypoints. Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).';
   $('fileBrowser').style.display = 'flex';
   loadDir(browsePath || '/');
 }
@@ -881,10 +1060,12 @@ function loadDir(path){
   browsePath = path.startsWith('/') ? path : '/' + path;
   $('fbPath').textContent = browsePath;
   $('fbList').innerHTML = '<div class="empty">Loading…</div>';
+  const seq = ++dirReqSeq;
   fetch(browsePath, { headers: { 'Accept': 'text/html' } })
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-    .then(renderDir)
-    .catch(e => { $('fbList').innerHTML = '<div class="empty">Cannot list this directory: ' + e.message +
+    .then(html => { if (seq === dirReqSeq) renderDir(html); })   // ignore a listing overtaken by a newer one
+    .catch(e => { if (seq !== dirReqSeq) return;
+      $('fbList').innerHTML = '<div class="empty">Cannot list this directory: ' + e.message +
       '<br><span style="font-size:11px;">The file browser needs the local http server (open the page via http://127.0.0.1:8765/…).</span></div>'; });
 }
 function renderDir(html){
@@ -900,7 +1081,7 @@ function renderDir(html){
     if (childPath === browsePath) return;
     let name; try { name = decodeURIComponent(childPath.replace(/\/$/, '').split('/').pop()); } catch(e){ name = raw; }
     if (!name) return;
-    const isPcd = /\.pcd$/i.test(name), isWp = /\.(yaml|yml|csv)$/i.test(name);
+    const isPcd = /\.(pcd|ply)(\?|#|$)/i.test(name), isWp = /\.(yaml|yml|csv)(\?|#|$)/i.test(name);
     if (raw.endsWith('/')) folders.push({ name, path: childPath });
     else if (isPcd && browseFilter !== 'wp') pcds.push({ name, path: childPath });
     else if (isWp && browseFilter !== 'pcd') wps.push({ name, path: childPath });
@@ -1013,8 +1194,11 @@ function bind() {
 // --- boot ------------------------------------------------------------------
 if (gl) { resize(); initGL(); bind(); requestAnimationFrame(tick);
   const q = new URLSearchParams(location.search).get('pcd');
-  if (q) fetch(q).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
-    .then(b => loadBuffer(b, q)).catch(e => toast('Failed to fetch ' + q + ': ' + e.message, 6000));
+  if (q) fetch(q).then(r => {
+    if (!r.ok) throw new Error(r.status);
+    if (/\.ply(\?|#|$)/i.test(q) && r.body && r.body.getReader) return loadPLYStream(r.body, q);
+    return r.arrayBuffer().then(b => loadBuffer(b, q));
+  }).catch(e => toast('Failed to fetch ' + q + ': ' + e.message, 6000));
 } else { bind(); }
 </script>
 </body>

@@ -92,7 +92,8 @@ ROS_DOMAIN_ID=7 ros2 launch scan_planner run_synthetic_multi.launch.py   # isola
 # Waypoint Studio (browser point-cloud viewer)
 
 `waypoint_studio.html` is a self-contained, browser-based tool for loading a
-`.pcd` map and marking waypoints by flying through it freely (inspired by
+`.pcd` point cloud **or** a 3D Gaussian Splatting `.ply` scene, and marking
+waypoints by flying through it freely (inspired by
 [superspl.at](https://superspl.at/)). It exports the exact same
 `fsm.waypoints` YAML that `keypoint_recorder.py` produces, so it can be used to
 hand-pick waypoints directly on a static map instead of driving the robot.
@@ -103,13 +104,13 @@ double-click the file and it runs offline in any modern browser.
 ## Run
 
 Open `tools/waypoint_studio.html` in a browser. There are three ways to load a
-file (a `.pcd` cloud **or** a `.yaml`/`.csv` waypoint set):
+file (a `.pcd`/`.ply` cloud **or** a `.yaml`/`.csv` waypoint set):
 
 1. **🗂 Browse files…** button — an in-page file browser that lists the folders
    and loadable files served by the local http server; click a folder to open it,
    or a file to load it. This works even inside sandboxed/embedded preview
    browsers (needs http, not `file://`).
-2. **Drag & drop** a `.pcd` (or `.yaml`/`.csv`) file anywhere onto the page.
+2. **Drag & drop** a `.pcd`/`.ply` (or `.yaml`/`.csv`) file anywhere onto the page.
 3. **Path/URL field** — type a server-relative path (e.g. `/map.pcd` or
    `/src/planner/plan_manage/config/keypoints.multi.yaml`) and press **Load** or
    Enter. The loader picks cloud vs. waypoints by file extension.
@@ -178,6 +179,44 @@ cloud about the origin so you can fix it:
 The rotation is baked into the point coordinates, so picking and the height
 colormap follow it, and already-marked waypoints rotate together with the model.
 Exported `fsm.waypoints` are therefore in the corrected frame.
+
+## 3DGS PLY maps
+
+The tool also loads a **3D Gaussian Splatting** `.ply` scene, which is usually
+more intuitive to pick waypoints against than a raw point cloud. Each Gaussian's
+**center** (`x, y, z`) is rendered as a point, colored from the splat's 0th-order
+spherical-harmonic term (`f_dc_0/1/2` → RGB); the view-dependent `f_rest_*` bands
+are ignored. Plain colored `.ply` (`red`/`green`/`blue`) and ASCII or binary
+(little/big-endian) layouts are supported as well.
+
+- **See the 3DGS colors:** uncheck **Height colormap** — otherwise points are
+  colored by Z instead of their splat color.
+- **File size:** the xiaohao `..._0.3m_3dgs.ply` (~11 MB, ~46k splats) loads
+  instantly and the mid-resolution `..._0.1m_3dgs.ply` (~105 MB, ~422k splats)
+  in ~10 s. The full-resolution `..._0.02m_3dgs.ply` (2.30 GiB, ~10 M splats)
+  also loads **in full**: `.ply` files are parsed incrementally from the
+  fetch/file stream with a progress toast, so the whole file never has to fit
+  one `ArrayBuffer` (browsers refuse a single buffer that large: `RangeError:
+  Array buffer allocation failed`). Expect a ~20–30 s load and heavy rendering
+  on weak GPUs — decimate once (below) if you want smoother interaction:
+
+  ```bash
+  # streams the source, copies every 8th splat verbatim (all 62 properties,
+  # same frame) -> ~1.25 M splats / ~0.29 GiB, which the studio loads normally
+  python3 tools/decimate_3dgs_ply.py src/simulator/3dgs_map/<...>_0.02m_3dgs.ply 8
+  ```
+
+  The output is still a valid 3DGS model (external splat viewers accept it too);
+  like the sources it is git-ignored under `src/simulator/3dgs_map/`.
+- **Coordinate frame:** the xiaohao 3DGS `.ply` shares the **identical metric
+  Z-up world frame** as the planner `.pcd` (verified from matching bounding
+  boxes), so **no Model-orientation rotation is needed** — leave Rot X/Y/Z at 0.
+  Waypoints picked on the `.ply` export to the same `fsm.waypoints` YAML and run
+  directly with `navi_mode:=2 keypoints_file:=...`.
+
+> These `.ply` scenes live in `src/simulator/3dgs_map/` and are **git-ignored**
+> (the full-resolution splat is ~2.5 GB); they are for interactive waypoint
+> picking only — the planner itself still consumes the `.pcd` map.
 
 ## Load waypoints
 

@@ -51,5 +51,10 @@ Thumbs.db
 # src/simulator/map_generator/maps/ and ship with the map_generator package.
 /src/simulator/map_generator/resource/
 
+# Local 3D Gaussian Splatting scenes used by tools/waypoint_studio.html for
+# interactive waypoint picking. Very large (the full-res 0.02m splat is ~2.5 GB)
+# and never committed; the planner itself consumes the .pcd maps instead.
+/src/simulator/3dgs_map/*.ply
+
 # Qoder IDE cache
 /.qoder/
