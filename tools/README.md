@@ -103,17 +103,15 @@ double-click the file and it runs offline in any modern browser.
 
 ## Run
 
-Open `tools/waypoint_studio.html` in a browser. There are three ways to load a
+Open `tools/waypoint_studio.html` in a browser. There are two ways to load a
 file (a `.pcd`/`.ply` cloud **or** a `.yaml`/`.csv` waypoint set):
 
 1. **🗂 Browse files…** button — an in-page file browser that lists the folders
-   and loadable files served by the local http server; click a folder to open it,
-   or a file to load it. This works even inside sandboxed/embedded preview
+   and cloud files (`.pcd`/`.ply`) served by the local http server; click a folder
+   to open it, or a file to load it. Waypoint files have their own **⬆ Load
+   waypoints…** browser. This works even inside sandboxed/embedded preview
    browsers (needs http, not `file://`).
 2. **Drag & drop** a `.pcd`/`.ply` (or `.yaml`/`.csv`) file anywhere onto the page.
-3. **Path/URL field** — type a server-relative path (e.g. `/map.pcd` or
-   `/src/planner/plan_manage/config/keypoints.multi.yaml`) and press **Load** or
-   Enter. The loader picks cloud vs. waypoints by file extension.
 
 > **Embedded/preview browsers:** some IDE webviews and sandboxed iframes block
 > the *native* OS file-picker dialog. This tool therefore uses the in-page
@@ -121,8 +119,8 @@ file (a `.pcd`/`.ply` cloud **or** a `.yaml`/`.csv` waypoint set):
 > listing) instead of a native picker, so loading works there too. If you open
 > the page from `file://` (no server), use drag & drop.
 
-Optionally serve the repo so the path field and the `?pcd=` auto-load shortcut
-work. Prefer the bundled **no-cache** server — plain `http.server` sends no cache
+Optionally serve the repo so the 🗂 file browser and the `?pcd=` auto-load
+shortcut work. Prefer the bundled **no-cache** server — plain `http.server` sends no cache
 headers, so the browser can keep serving a **stale** page after edits:
 
 ```bash
@@ -152,7 +150,8 @@ while it works.
 | Right-drag | Look around freely (unlimited 360° yaw and pitch, rolls over past straight up/down) |
 | Mouse wheel | Zoom in / out (dolly along the view direction) |
 | Left-click | Mark a waypoint (snaps to the nearest cloud point) |
-| `P` | Drop a waypoint at the crosshair |
+| `P` / **＋ Crosshair** | Drop a waypoint at the crosshair |
+| **🎥 FlyCamera** | Drop a waypoint at the camera's own position (no snap to the cloud) |
 | `Z` | Undo last waypoint |
 | `L` | Fly to the selected waypoint |
 
@@ -191,6 +190,17 @@ are ignored. Plain colored `.ply` (`red`/`green`/`blue`) and ASCII or binary
 
 - **See the 3DGS colors:** uncheck **Height colormap** — otherwise points are
   colored by Z instead of their splat color.
+- **Density when zooming:** the studio renders splat *centers* as dots. With the
+  plain **Point size** (fixed pixels) a zoomed-in surface falls apart into a
+  sparse dot grid; the new **Splat size** slider instead gives each dot a
+  world-space diameter (px shrink with distance, like a splat viewer's projected
+  Gaussians) so floors/walls stay continuous up close. It auto-enables at
+  `0.030 m` when a 3DGS `.ply` loads (0 = off; PCD maps always load with it
+  off). Pick a diameter close to the splat spacing: `0.02m` scans fuse at ~0.03,
+  while the coarser `0.1m`/`0.3m` maps need more (slider goes up to `0.5 m`).
+  True anisotropic splatting (scale/rotation/opacity/SH `f_rest`) is
+  still ignored — this only restores the surface-like density, not the exact
+  superspl.at look. Picking is unaffected (it always snaps to splat centers).
 - **File size:** the xiaohao `..._0.3m_3dgs.ply` (~11 MB, ~46k splats) loads
   instantly and the mid-resolution `..._0.1m_3dgs.ply` (~105 MB, ~422k splats)
   in ~10 s. The full-resolution `..._0.02m_3dgs.ply` (2.30 GiB, ~10 M splats)
@@ -229,7 +239,7 @@ are ignored. Plain colored `.ply` (`red`/`green`/`blue`) and ASCII or binary
 - **CSV** — reads `index,x,y,z` rows (a leading index/header column is skipped).
 
 Loading **replaces** the current waypoint list. You can also drag & drop a
-waypoints file, or type its path into the path/URL field.
+waypoints file.
 
 ## Export
 

@@ -115,10 +115,6 @@
   <div class="row">
     <button id="browseBtn" class="btn primary grow" title="Load a .pcd or .ply cloud file">🗂 Browse files…</button>
   </div>
-  <div class="row" style="margin-top:6px;">
-    <input class="txt" id="pcdUrl" placeholder="path/URL: /map.pcd, scene.ply, or waypoints.yaml" spellcheck="false" />
-    <button id="loadUrl">Load</button>
-  </div>
 
   <h2>Waypoints <span class="muted" id="wpCount">(0)</span></h2>
   <div class="row" style="margin-bottom:6px;">
@@ -126,6 +122,7 @@
   </div>
   <div class="row" style="margin-bottom:6px;">
     <button id="addCenter" title="Add at crosshair (P)">＋ Crosshair</button>
+    <button id="addCam" title="Add at the camera's own position (no snap to cloud)">🎥 FlyCamera</button>
     <button id="undoBtn" title="Remove last (Z)">↶ Undo</button>
     <button id="clearBtn" class="danger" title="Remove all">✕ Clear</button>
   </div>
@@ -144,6 +141,7 @@
 
   <h2>View</h2>
   <div class="toggleRow"><span style="width:76px;">Point size</span><input type="range" id="pointSize" min="1" max="12" step="0.5" value="2.5"></div>
+  <div class="toggleRow" title="World-space dot diameter for 3DGS clouds; auto-set when a splat .ply loads, 0 = fixed-pixel Point size"><span style="width:76px;">Splat size</span><input type="range" id="splatSize" min="0" max="0.5" step="0.005" value="0"><span id="splatSizeVal" class="muted">off</span></div>
   <div class="toggleRow"><span style="width:76px;">Pick radius</span><input type="range" id="pickThresh" min="0.01" max="1.0" step="0.01" value="0.10"></div>
   <div class="toggleRow"><span style="width:76px;">Move speed</span><input type="range" id="speed" min="0.1" max="20" step="0.1" value="9"><span id="speedVal" class="muted">9.0</span></div>
   <div class="toggleRow"><input type="checkbox" id="snapCloud" checked><label for="snapCloud">Snap clicks to nearest cloud point</label></div>
@@ -200,7 +198,7 @@ const waypoints = [];      // { pos:[x,y,z] }
 let selected = -1;
 
 const cam = { pos: [0, 2, 6], yaw: 0, pitch: 0 };
-let moveSpeed = 9.0, markerScale = 0.08, pickThreshold = 0.10, pointSize = 2.5;
+let moveSpeed = 9.0, markerScale = 0.08, pickThreshold = 0.10, pointSize = 2.5, splatSize = 0;
 const keys = Object.create(null);
 let dragging = false, lastMouse = { x: 0, y: 0 }, leftDown = null;
 
@@ -271,8 +269,10 @@ function forwardVec() {
 function rightVec() { return [Math.sin(cam.yaw), -Math.cos(cam.yaw), 0]; }
 
 // --- shaders ---------------------------------------------------------------
-const VS = `attribute vec3 aPos; attribute vec3 aColor; uniform mat4 uVP; uniform float uSize;
-varying vec3 vColor; void main(){ gl_Position = uVP*vec4(aPos,1.0); gl_PointSize = uSize; vColor = aColor; }`;
+const VS = `attribute vec3 aPos; attribute vec3 aColor; uniform mat4 uVP; uniform float uSize; uniform float uWorld; uniform float uPxPerM;
+varying vec3 vColor; void main(){ gl_Position = uVP*vec4(aPos,1.0);
+  gl_PointSize = uWorld > 0.0 ? min(max(uWorld*uPxPerM/max(gl_Position.w,1e-3),1.0),256.0) : uSize;
+  vColor = aColor; }`;
 const FS = `precision mediump float; varying vec3 vColor; uniform float uRound;
 void main(){ if(uRound>0.5){ vec2 c=gl_PointCoord-vec2(0.5); if(dot(c,c)>0.25) discard; } gl_FragColor=vec4(vColor,1.0); }`;
 let prog, loc = {};
@@ -287,6 +287,8 @@ function initGL() {
   loc.aColor = gl.getAttribLocation(prog, 'aColor');
   loc.uVP = gl.getUniformLocation(prog, 'uVP');
   loc.uSize = gl.getUniformLocation(prog, 'uSize');
+  loc.uWorld = gl.getUniformLocation(prog, 'uWorld');
+  loc.uPxPerM = gl.getUniformLocation(prog, 'uPxPerM');
   loc.uRound = gl.getUniformLocation(prog, 'uRound');
   posBuf = gl.createBuffer(); colBuf = gl.createBuffer();
   gl.enable(gl.DEPTH_TEST);
@@ -497,10 +499,10 @@ function parsePLY(buffer) {
       }
       idx++;
     }
-    return { pos, rgb, count: idx };
+    return { pos, rgb, count: idx, gs: h.hasSH };
   }
   plyDecode(h, new DataView(buffer), h.offset, 0, h.numPoints, pos, rgb);
-  return { pos, rgb, count: h.numPoints };
+  return { pos, rgb, count: h.numPoints, gs: h.hasSH };
 }
 // Streaming load for .ply files too big for one ArrayBuffer (the 2.3 GiB full-res
 // xiaohao splat): parse the header from the first bytes, then decode fixed-stride
@@ -551,7 +553,7 @@ async function loadPLYStream(readable, label) {
   }
   reader.cancel().catch(() => {});
   if (idx !== N) throw new Error('PLY truncated: ' + idx + ' of ' + N + ' vertices');
-  setCloud({ pos, rgb, count: N });
+  setCloud({ pos, rgb, count: N, gs: h.hasSH });
   $('toast').style.display = 'none';
 }
 
@@ -638,6 +640,11 @@ function uploadCloud(){
   $('stCloud').classList.remove('muted');
 }
 function setCloud(data) {
+  // 3DGS clouds default to world-space dot sizing so zoomed-in surfaces stay
+  // continuous (like splat viewers); other clouds revert to fixed-pixel points
+  splatSize = data.gs ? 0.03 : 0;
+  $('splatSize').value = splatSize;
+  $('splatSizeVal').textContent = splatSize > 0 ? splatSize.toFixed(3)+' m' : 'off';
   basePositions = data.pos; pointCount = data.count; baseRgb = data.rgb;
   positions = new Float32Array(basePositions.length);
   curMat = rotMatrixFromInputs();
@@ -688,6 +695,8 @@ function render() {
   if (pointCount) {
     gl.uniform1f(loc.uSize, pointSize);
     gl.uniform1f(loc.uRound, pointSize >= 2 ? 1 : 0);
+    gl.uniform1f(loc.uWorld, splatSize);                       // >0: dot diameter in meters (3DGS look)
+    gl.uniform1f(loc.uPxPerM, glCanvas.height * 0.8660254);    // px per meter at 1 m for the 60° fov
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.enableVertexAttribArray(loc.aPos); gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, colBuf); gl.enableVertexAttribArray(loc.aColor); gl.vertexAttribPointer(loc.aColor, 3, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.POINTS, 0, pointCount);
@@ -710,7 +719,7 @@ function drawMarkers() {
     else { c[i*3]=1; c[i*3+1]=0.24; c[i*3+2]=0.41; }
   }
   gl.disable(gl.DEPTH_TEST);
-  gl.uniform1f(loc.uSize, 12); gl.uniform1f(loc.uRound, 1);
+  gl.uniform1f(loc.uSize, 12); gl.uniform1f(loc.uRound, 1); gl.uniform1f(loc.uWorld, 0);   // markers stay fixed-px
   gl.bindBuffer(gl.ARRAY_BUFFER, mPosBuf); gl.bufferData(gl.ARRAY_BUFFER, p, gl.DYNAMIC_DRAW);
   gl.enableVertexAttribArray(loc.aPos); gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
   gl.bindBuffer(gl.ARRAY_BUFFER, mColBuf); gl.bufferData(gl.ARRAY_BUFFER, c, gl.DYNAMIC_DRAW);
@@ -1042,10 +1051,10 @@ let browseFilter = 'all';
 let dirReqSeq = 0;   // listing request sequence; stale responses are dropped
 function openBrowser(filter){
   browseFilter = filter || 'all';
-  $('fbTitle').textContent = browseFilter === 'wp' ? 'Load waypoints (.yaml / .csv)' : 'Browse files (.pcd / .ply / .yaml / .csv)';
+  $('fbTitle').textContent = browseFilter === 'wp' ? 'Load waypoints (.yaml / .csv)' : 'Browse files (.pcd / .ply)';
   $('fbHint').innerHTML = browseFilter === 'wp'
     ? 'Click a folder to open it, or a <b>.yaml</b>/<b>.csv</b> file to load its waypoints (this replaces the current list). Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).'
-    : 'Click a folder to open it, or a file to load it: <b>.pcd</b>/<b>.ply</b> → point cloud, <b>.yaml</b>/<b>.csv</b> → waypoints. Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).';
+    : 'Click a folder to open it, or a <b>.pcd</b>/<b>.ply</b> file to load it as the point cloud (waypoint files live behind <b>⬆ Load waypoints…</b>). Files come from the local http server — open the page over http (e.g. http://127.0.0.1:8765/…).';
   $('fileBrowser').style.display = 'flex';
   loadDir(browsePath || '/');
 }
@@ -1105,15 +1114,14 @@ function renderDir(html){
 }
 function bind() {
   addEventListener('resize', resize);
-  $('loadUrl').onclick = () => loadFromUrl($('pcdUrl').value);
-  $('pcdUrl').addEventListener('keydown', e => { if (e.key === 'Enter') loadFromUrl($('pcdUrl').value); });
-  $('browseBtn').onclick = () => openBrowser('all');
+  $('browseBtn').onclick = () => openBrowser('pcd');   // cloud-only; waypoints use ⬆ Load waypoints…
   $('loadWpBtn').onclick = () => openBrowser('wp');
   $('fbClose').onclick = closeBrowser;
   $('fbUp').onclick = fbUp;
   $('fileBrowser').addEventListener('click', e => { if (e.target.id === 'fileBrowser') closeBrowser(); });
   addEventListener('keydown', e => { if (e.key === 'Escape' && $('fileBrowser').style.display === 'flex') closeBrowser(); });
   $('addCenter').onclick = () => pushWaypoint(pickAt(innerWidth/2, innerHeight/2));
+  $('addCam').onclick = () => pushWaypoint([cam.pos[0], cam.pos[1], cam.pos[2]]);   // snapshot: cam.pos is mutated live
   $('undoBtn').onclick = () => removeWaypoint(waypoints.length - 1);
   let clearArmed = false, clearTimer = null;
   const disarmClear = () => { clearTimeout(clearTimer); clearArmed = false; const b = $('clearBtn'); b.textContent = '✕ Clear'; b.title = 'Remove all'; };
@@ -1133,6 +1141,7 @@ function bind() {
   $('saveRepo').onclick = saveToRepo;
   $('savePath').addEventListener('keydown', e => { if (e.key === 'Enter') saveToRepo(); });
   $('pointSize').addEventListener('input', e => pointSize = parseFloat(e.target.value));
+  $('splatSize').addEventListener('input', e => { splatSize = parseFloat(e.target.value); $('splatSizeVal').textContent = splatSize > 0 ? splatSize.toFixed(3)+' m' : 'off'; });
   $('pickThresh').addEventListener('input', e => pickThreshold = parseFloat(e.target.value));
   $('speed').addEventListener('input', e => { moveSpeed = parseFloat(e.target.value); $('speedVal').textContent = moveSpeed.toFixed(1); });
   $('heightColor').addEventListener('change', () => { if (pointCount) { buildColors();
