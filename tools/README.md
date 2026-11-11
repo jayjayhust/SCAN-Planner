@@ -200,7 +200,11 @@ are ignored. Plain colored `.ply` (`red`/`green`/`blue`) and ASCII or binary
   while the coarser `0.1m`/`0.3m` maps need more (slider goes up to `0.5 m`).
   True anisotropic splatting (scale/rotation/opacity/SH `f_rest`) is
   still ignored — this only restores the surface-like density, not the exact
-  superspl.at look. Picking is unaffected (it always snaps to splat centers).
+  superspl.at look. **Picking follows the look:** with Splat size on, a click
+  hits the frontmost splat whose disk covers the cursor (z-buffer semantics,
+  still returning that splat's center), so picks no longer pass through the
+  rendered surface; with it off, the classic nearest-center-in-radius rule
+  applies.
 - **File size:** the xiaohao `..._0.3m_3dgs.ply` (~11 MB, ~46k splats) loads
   instantly and the mid-resolution `..._0.1m_3dgs.ply` (~105 MB, ~422k splats)
   in ~10 s. The full-resolution `..._0.02m_3dgs.ply` (2.30 GiB, ~10 M splats)

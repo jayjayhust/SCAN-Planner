@@ -857,14 +857,22 @@ function pickAt(clientX, clientY) {
   const dl = Math.hypot(dx,dy,dz); dx/=dl; dy/=dl; dz/=dl;
   const ox=cam.pos[0], oy=cam.pos[1], oz=cam.pos[2];
   if (pointCount && $('snapCloud').checked) {
-    let best=-1, bestD=pickThreshold*pickThreshold;
+    // Splat-surface mode (splatSize>0): the cursor is over a splat's projected
+    // disk iff its center is within splatSize/2 of the ray (disk px radius and
+    // ray offset both scale as 1/depth, so the test is exact). Return the
+    // FRONTMOST covering splat — like the z-buffer — instead of the center
+    // closest to the ray, which can be buried behind the visible surface.
+    const surf = splatSize > 0, fR2 = splatSize * splatSize / 4;
+    let best=-1, bestD=pickThreshold*pickThreshold, fi=-1, fT=Infinity;
     for (let i = 0; i < pointCount; i++) {
       const wx=positions[i*3]-ox, wy=positions[i*3+1]-oy, wz=positions[i*3+2]-oz;
       const t = wx*dx+wy*dy+wz*dz;
       if (t < 0) continue;
       const d = wx*wx+wy*wy+wz*wz - t*t;
+      if (surf && d < fR2 && t < fT) { fT = t; fi = i; }
       if (d < bestD) { bestD = d; best = i; }
     }
+    if (surf && fi >= 0) return [positions[fi*3], positions[fi*3+1], positions[fi*3+2]];
     if (best >= 0) return [positions[best*3], positions[best*3+1], positions[best*3+2]];
   }
   const dist = Math.max(2, markerScale * 40);
